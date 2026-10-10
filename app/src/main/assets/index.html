@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#08080f"><title>NaviGlass Android</title><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css">
+<script src="vendor/three.min.js" defer></script><script type="module" src="app.js"></script></head>
+<body><header><a class="brand" href="#" aria-label="NaviGlass"><img src="icon.svg" alt="">NaviGlass<span>ANDROID</span></a><div><button id="search" aria-label="Search music">⌕</button><button id="library" aria-label="Open library">☰</button></div></header>
+<main><div id="scene" aria-label="Album Cover Flow. Swipe left or right to browse." tabindex="0"></div>
+<section id="caption" aria-live="polite"><h1 id="title">Your music. In motion.</h1><p id="subtitle">Local files. No account. Just play.</p><button id="songs">View songs</button></section>
+<div class="browse"><button id="backAlbum" aria-label="Previous album">‹</button><span id="albumPosition"></span><button id="nextAlbum" aria-label="Next album">›</button></div>
+<section id="welcome"><img src="icon.svg" alt=""><h2>Meet your music again.</h2><p>A familiar Cover Flow, built for the music on your phone. Your files stay yours.</p><button class="primary" id="device">Load device music</button><button id="folder">Choose a music folder</button><small>Read-only access • Android 10 or later</small></section>
+</main>
+<footer><div class="now"><div><strong id="nowTitle">Nothing playing</strong><span id="nowArtist">Choose an album to begin</span></div><button id="nowFavourite" aria-label="Favourite playing song">♡</button></div>
+<div class="seek"><span id="elapsed">0:00</span><input id="seek" type="range" min="0" max="1000" value="0" aria-label="Playback position"><span id="duration">0:00</span></div>
+<div class="transport"><button id="shuffle" aria-label="Shuffle">⤨</button><button id="previous" aria-label="Previous song">◀│</button><button class="play" id="play" aria-label="Play">▶</button><button id="next" aria-label="Next song">│▶</button><button id="repeat" aria-label="Repeat">↻</button></div>
+</footer>
+<dialog id="panel"><div class="panelHead"><h2 id="panelTitle">Library</h2><button id="close" aria-label="Close panel">×</button></div><div id="panelBody"></div></dialog>
+<div id="scan" hidden><span id="scanText"></span><progress aria-label="Scanning music"></progress><button id="cancel">Cancel scan</button></div><div id="toast" role="status" hidden></div>
+</body></html>
