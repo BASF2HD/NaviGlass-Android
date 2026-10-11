@@ -1,4 +1,18 @@
 plugins { id 'com.android.application' }
+// Optional explicitly approved test-build exception; no private server address is committed.
+def approvedHttpHost = providers.gradleProperty('navidromeHttpHost').getOrElse('')
+def approvedHttpPort = providers.gradleProperty('navidromeHttpPort').getOrElse('-1').toInteger()
+if (approvedHttpHost && (!(approvedHttpHost ==~ /100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}/) || approvedHttpHost.tokenize('.').any { it.toInteger() > 255 } || approvedHttpPort < 1 || approvedHttpPort > 65535)) throw new GradleException('HTTP exception must specify one Tailscale IPv4 address and port')
+def generatedNetworkResources = layout.buildDirectory.dir('generated/naviglass-network/res')
+def networkPolicyTask = tasks.register('generateNaviGlassNetworkPolicy') {
+    inputs.property('host', approvedHttpHost)
+    outputs.dir(generatedNetworkResources)
+    doLast {
+        def output = new File(generatedNetworkResources.get().asFile, 'xml/network_security_config.xml')
+        output.parentFile.mkdirs()
+        output.text = '<network-security-config><base-config cleartextTrafficPermitted="false"/>' + (approvedHttpHost ? '<domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="false">' + approvedHttpHost + '</domain></domain-config>' : '') + '</network-security-config>'
+    }
+}
 android {
     namespace 'com.naviglass.android'
     compileSdk 36
@@ -7,18 +21,24 @@ android {
         applicationId 'com.naviglass.android'
         minSdk 29
         targetSdk 36
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 7
+        versionName '0.2.4'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        buildConfigField 'String', 'NAVIDROME_HTTP_HOST', '"' + approvedHttpHost + '"'
+        buildConfigField 'int', 'NAVIDROME_HTTP_PORT', approvedHttpPort.toString()
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildTypes { release { minifyEnabled false } }
     testOptions { unitTests.returnDefaultValues = true }
+    buildFeatures { buildConfig true }
+    sourceSets.main.res.srcDir(generatedNetworkResources)
 }
+tasks.named('preBuild').configure { dependsOn(networkPolicyTask) }
 dependencies {
     implementation 'androidx.activity:activity:1.13.0'
     implementation 'androidx.webkit:webkit:1.14.0'
     implementation 'androidx.media3:media3-exoplayer:1.11.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.11.1'
     implementation 'androidx.media3:media3-session:1.11.1'
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test:runner:1.6.2'

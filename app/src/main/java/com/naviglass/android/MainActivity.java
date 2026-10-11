@@ -44,7 +44,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final AtomicBoolean cancelled=new AtomicBoolean();
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private boolean scanning,foreground;
+    private boolean scanning,foreground,immersivePlayer;
     private JSONObject scanStatus;
     private String scanError="";
     private final Runnable ticker=new Runnable(){public void run(){if(foreground){state();handler.postDelayed(this,500);}}};
@@ -63,19 +63,24 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         web.setBackgroundColor(0xff08080f);
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
+        // Honour the original player's fitted compact labels; WebView defaults to an 8px floor.
+        web.getSettings().setMinimumFontSize(1);
+        web.getSettings().setMinimumLogicalFontSize(1);
         web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);
         web.getSettings().setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         WebViewAssetLoader assets=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(this))
             .addPathHandler("/art/",path->{
                 if(!path.matches("[a-zA-Z0-9_-]{1,80}\\.jpg"))return missing();
-                File f=Library.get(this).artwork(path.substring(0,path.length()-4));
+                String coverId=path.substring(0,path.length()-4);File f;
+                try{f=coverId.startsWith("nd_")?NetworkSources.cover(this,coverId):Library.get(this).artwork(coverId);}catch(Exception e){return missing();}
                 try {return f==null?missing():new WebResourceResponse("image/jpeg",null,new FileInputStream(f));}catch(Exception e){return missing();}
             }).build();
+        final WebViewAssetLoader artAssets=new WebViewAssetLoader.Builder().addPathHandler("/radio-art/",path->{try{if(!path.matches("radio:[a-z0-9-]{1,50}\\.jpg"))return missing();File f=RadioDirectory.artwork(this,path.substring(0,path.length()-4));return f==null?missing():new WebResourceResponse("image/jpeg",null,new FileInputStream(f));}catch(Exception e){return missing();}}).build();
         web.setWebViewClient(new WebViewClient(){
             @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return true;}
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
                 Uri u=r.getUrl();if(!"https".equals(u.getScheme())||!"appassets.androidplatform.net".equals(u.getHost()))return missing();
-                WebResourceResponse response=assets.shouldInterceptRequest(u);return response==null?missing():response;
+                WebResourceResponse response=u.getPath().startsWith("/radio-art/")?artAssets.shouldInterceptRequest(u):assets.shouldInterceptRequest(u);return response==null?missing():response;
             }
         });
         if(!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)){
@@ -92,7 +97,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         controllerFuture.addListener(()->{try{player=controllerFuture.get();player.addListener(new Player.Listener(){
             @Override public void onEvents(Player p,Player.Events events){state();}
         });state();}catch(Exception e){event("error",new JSONObject(),"Cannot start audio service");}},getMainExecutor());
-        web.loadUrl(ORIGIN+"/assets/index.html");
+        web.loadUrl(ORIGIN+"/assets/index.html");updateSystemBars();
     }
     private static WebResourceResponse missing(){return new WebResourceResponse("text/plain","UTF-8",404,"Not Found",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));}
     private void handle(JSONObject request)throws Exception {
@@ -100,38 +105,64 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         String action=request.optString("action");
         switch(action){
             case "ready": respond(id,new JSONObject().put("native",true).put("scanning",scanning));catalog();state();if(scanStatus!=null)event("progress",scanStatus,scanError);break;
-            case "device": permissionAndScan();respond(id,new JSONObject());break;
-            case "folder": chooseFolder();respond(id,new JSONObject());break;
+            case "device": NetworkSources.local(this);permissionAndScan();respond(id,new JSONObject());break;
+            case "folder": NetworkSources.local(this);chooseFolder();respond(id,new JSONObject());break;
             case "rescan": if(scanning)throw new IllegalStateException("A scan is already running");
                 String tree=getPreferences(MODE_PRIVATE).getString("tree","");if(tree.isEmpty())permissionAndScan();else scan(Uri.parse(tree));respond(id,new JSONObject());break;
             case "cancel": cancelled.set(true);respond(id,new JSONObject());break;
+            case "radioStations": respond(id,new JSONObject().put("stations",RadioDirectory.stations(this)));break;
+            case "radioPlay":
+                requirePlayer();String station=request.getString("station");java.util.List<MediaItem> radioQueue=RadioDirectory.queue(this);int stationIndex=-1;
+                if(request.has("ids")){JSONArray radioIds=request.getJSONArray("ids");if(radioIds.length()>200)throw new IllegalArgumentException("Too many radio stations");radioQueue=new ArrayList<>();for(int i=0;i<radioIds.length();i++){MediaItem item=RadioDirectory.item(this,radioIds.getString(i));if(item==null)throw new IllegalArgumentException("Unknown station");radioQueue.add(item);}}
+                for(int i=0;i<radioQueue.size();i++)if(radioQueue.get(i).mediaId.equals(station))stationIndex=i;
+                if(stationIndex<0)throw new IllegalArgumentException("Unknown radio station");
+                getSharedPreferences("playback",0).edit().putString("albumOrder","[]").putLong("contextRevision",System.nanoTime()).apply();
+                player.setShuffleModeEnabled(false);player.setRepeatMode(Player.REPEAT_MODE_OFF);player.setMediaItems(radioQueue,stationIndex,0);player.prepare();player.play();respond(id,new JSONObject());
+                if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},43);break;
             case "play":
                 requirePlayer();JSONArray ids=request.getJSONArray("ids");if(ids.length()==0||ids.length()>10000)throw new IllegalArgumentException("Choose 1–10000 songs");
-                ArrayList<MediaItem> items=new ArrayList<>();for(int i=0;i<ids.length();i++){Track t=Library.get(this).track(ids.getString(i));if(t==null)throw new IllegalArgumentException("Song unavailable; refresh library");items.add(t.mediaItem());}
+                ArrayList<MediaItem> items=new ArrayList<>();for(int i=0;i<ids.length();i++){Track t=Library.get(this).track(ids.getString(i));MediaItem item=NetworkSources.item(this,t);if(item==null)throw new IllegalArgumentException("Song unavailable; refresh library or reconnect your server");items.add(item);}
                 int index=request.optInt("index",0);if(index<0||index>=items.size())throw new IllegalArgumentException("Invalid song selection");
+                JSONArray albumOrder=request.optJSONArray("albumIds");if(albumOrder==null)albumOrder=new JSONArray();if(albumOrder.length()>10000)throw new IllegalArgumentException("Too many albums");for(int i=0;i<albumOrder.length();i++)if(albumOrder.getString(i).length()>200)throw new IllegalArgumentException("Invalid album ID");
+                Track chosen=Library.get(this).track(ids.getString(index));for(int i=0;i<items.size();i++)if(!Library.get(this).track(items.get(i).mediaId).albumId.equals(chosen.albumId)){albumOrder=new JSONArray();break;}
+                getSharedPreferences("playback",0).edit().putString("albumOrder",albumOrder.toString()).putLong("contextRevision",System.nanoTime()).apply();
                 player.setMediaItems(items,index,0);player.prepare();player.play();respond(id,new JSONObject());break;
-            case "toggle": requirePlayer();if(player.isPlaying())player.pause();else{player.prepare();player.play();}respond(id,new JSONObject());break;
-            case "next": requirePlayer();player.seekToNextMediaItem();respond(id,new JSONObject());break;
-            case "previous": requirePlayer();player.seekToPrevious();respond(id,new JSONObject());break;
+            case "toggle": requirePlayer();if(player.getPlayWhenReady())player.pause();else{player.prepare();player.play();}respond(id,new JSONObject());break;
+            case "next": requirePlayer();if(player.hasNextMediaItem()){player.seekToNextMediaItem();player.play();}else adjacentAlbum(1);respond(id,new JSONObject());break;
+            case "previous": requirePlayer();if(player.hasPreviousMediaItem()){player.seekToPreviousMediaItem();player.play();}else adjacentAlbum(-1);respond(id,new JSONObject());break;
             case "seek": requirePlayer();long duration=player.getDuration();long position=Math.max(0,request.optLong("position"));player.seekTo(duration>0?Math.min(position,duration):position);respond(id,new JSONObject());break;
             case "shuffle": requirePlayer();player.setShuffleModeEnabled(!player.getShuffleModeEnabled());respond(id,new JSONObject());break;
-            case "repeat": requirePlayer();player.setRepeatMode((player.getRepeatMode()+1)%3);respond(id,new JSONObject());break;
+            case "repeat": requirePlayer();player.setRepeatMode(AlbumPlaybackPolicy.nextRepeatMode(player.getRepeatMode()));respond(id,new JSONObject());break;
+            case "volume":requirePlayer();player.setVolume((float)Math.max(0,Math.min(1,request.optDouble("value",1))));respond(id,new JSONObject());break;
+            case "immersive":immersivePlayer=request.optBoolean("enabled");updateSystemBars();respond(id,new JSONObject());break;
+            case "serverDisconnect":if(player!=null&&player.getCurrentMediaItem()!=null&&player.getCurrentMediaItem().mediaId.startsWith("nd_")){player.pause();player.clearMediaItems();}NetworkSources.disconnect(this);respond(id,new JSONObject());catalog();break;
             default:
                 worker.execute(()->{try{
                     Library library=Library.get(this);JSONObject result=new JSONObject();
                     switch(action){
-                        case "tracks": String mode=request.optString("mode","album");if(!java.util.Arrays.asList("album","favourites","playlist","search").contains(mode))throw new IllegalArgumentException("Unknown view");
-                            result.put("tracks",library.tracks(mode,request.optString("value").substring(0,Math.min(request.optString("value").length(),200))));break;
+                        case "tracks": String mode=request.optString("mode","album");if(!java.util.Arrays.asList("album","all","favourites","playlist","search","artist","serverPlaylist").contains(mode))throw new IllegalArgumentException("Unknown view");
+                            String value=request.optString("value").substring(0,Math.min(request.optString("value").length(),200));result.put("albumStarred",getSharedPreferences("album-favourites",0).getBoolean((NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:")+value,false));result.put("tracks",NetworkSources.active(this)||mode.equals("serverPlaylist")||value.startsWith("nd:")?NetworkSources.tracks(this,mode,value):library.tracks(mode,value));break;
+                        case "albumFavourite":String album=request.getString("album");if(album.length()>200)throw new IllegalArgumentException("Invalid album");String albumKey=(NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:")+album;android.content.SharedPreferences favAlbums=getSharedPreferences("album-favourites",0);boolean starred=!favAlbums.getBoolean(albumKey,false);favAlbums.edit().putBoolean(albumKey,starred).apply();result.put("albumStarred",starred);break;
                         case "favourite":result.put("favourite",library.toggleFavourite(request.getString("track")));break;
-                        case "playlists":result.put("playlists",library.playlists());break;
+                        case "playlists":JSONArray lists=library.playlists();if(NetworkSources.active(this)){JSONArray remote=NetworkSources.playlists(this);for(int i=0;i<remote.length();i++)lists.put(remote.getJSONObject(i));}result.put("playlists",lists);break;
+                        case "trackInfo":result.put("track",TrackDetails.read(this,request.getString("track")));break;
+                        case "radioSaved":result.put("stations",RadioDirectory.saved(this));break;
+                        case "radioSave":result.put("saved",RadioDirectory.save(this,request.getString("station"),request.optBoolean("save")));break;
+                        case "radioSearch":result.put("stations",RadioDirectory.search(this,request));break;
+                        case "serverStatus":result=NetworkSources.status(this);break;
+                        case "serverConnect":NetworkSources.connect(this,request);result=NetworkSources.status(this);runOnUiThread(this::catalog);break;
+                        case "serverMore":result.put("albums",NetworkSources.more(this));runOnUiThread(this::catalog);break;
+                        case "serverLocal":NetworkSources.local(this);runOnUiThread(this::catalog);break;
+                        case "serverUse":NetworkSources.account(this);getSharedPreferences("server",MODE_PRIVATE).edit().putBoolean("active",true).apply();runOnUiThread(this::catalog);break;
                         case "createPlaylist":result.put("playlist",library.createPlaylist(request.getString("name")));break;
                         case "addPlaylist":library.addToPlaylist(request.getString("playlist"),request.getString("track"));break;
                         default:throw new IllegalArgumentException("Unknown action");
                     }
-                    runOnUiThread(()->respond(id,result));
+                    final JSONObject response=result;runOnUiThread(()->respond(id,response));
                 }catch(Exception e){runOnUiThread(()->failure(id,e));}});
         }
     }
+    private void adjacentAlbum(int direction){Bundle args=new Bundle();args.putInt("direction",direction);player.sendCustomCommand(new androidx.media3.session.SessionCommand(PlaybackService.ADJACENT,Bundle.EMPTY),args);}
     private void requirePlayer(){if(player==null)throw new IllegalStateException("Audio service is still connecting");}
     private void respond(String id,JSONObject data){try{send(new JSONObject().put("type","response").put("id",id).put("data",data));}catch(Exception ignored){}}
     private void failure(String id,Exception e){try{send(new JSONObject().put("type","response").put("id",id).put("error",friendly(e)));}catch(Exception ignored){}}
@@ -141,15 +172,16 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private void event(String type,JSONObject data,String error){try{send(new JSONObject().put("type",type).put("data",data).put("error",error));}catch(Exception ignored){}}
     private void send(JSONObject data){if(bridge!=null&&!isDestroyed()&&WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))bridge.postMessage(data.toString());}
     private void state(){if(player==null||bridge==null||!foreground)return;try{
-        JSONObject s=new JSONObject().put("playing",player.isPlaying()).put("buffering",player.getPlaybackState()==Player.STATE_BUFFERING)
+        JSONObject s=new JSONObject().put("playing",player.isPlaying()).put("buffering",player.getPlayWhenReady()&&player.getPlaybackState()==Player.STATE_BUFFERING)
             .put("position",Math.max(0,player.getCurrentPosition())).put("duration",Math.max(0,player.getDuration()==C.TIME_UNSET?0:player.getDuration()))
-            .put("shuffle",player.getShuffleModeEnabled()).put("repeat",player.getRepeatMode());
+            .put("shuffle",player.getShuffleModeEnabled()).put("repeat",player.getRepeatMode()).put("volume",player.getVolume());
         MediaItem current=player.getCurrentMediaItem();Track t=current==null?null:Library.get(this).track(current.mediaId);
         if(t!=null){s.put("track",t.json(Library.get(this).favourite(t.id)));if(s.optLong("duration")==0)s.put("duration",t.duration);}
-        if(player.getPlayerError()!=null)s.put("error","This song could not be played. Check source access and audio format.");
+        else if(current!=null){JSONObject radio=RadioDirectory.state(this,current.mediaId);if(radio!=null){s.put("track",radio);s.put("duration",0).put("position",0);}}
+        if(player.getPlayerError()!=null)s.put("error",current!=null&&current.mediaId.startsWith("radio:")?"Station unavailable. Check your internet connection or try another station.":"This song could not be played. Check source access and audio format.");
         event("state",s,"");
     }catch(Exception ignored){}}
-    private void catalog(){worker.execute(()->{try{JSONObject data=new JSONObject().put("albums",Library.get(this).albums());runOnUiThread(()->event("catalog",data,""));}
+    private void catalog(){worker.execute(()->{try{JSONArray list=NetworkSources.active(this)?NetworkSources.albums(this):Library.get(this).albums();String prefix=NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:";for(int i=0;i<list.length();i++){JSONObject album=list.getJSONObject(i);album.put("starred",getSharedPreferences("album-favourites",0).getBoolean(prefix+album.getString("id"),false));}JSONObject data=new JSONObject().put("albums",list).put("remote",NetworkSources.active(this));runOnUiThread(()->event("catalog",data,""));}
         catch(Exception e){runOnUiThread(()->event("error",new JSONObject(),friendly(e)));}});}
     private void permissionAndScan(){if(scanning){event("error",new JSONObject(),"A scan is already running");return;}
         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_AUDIO:Manifest.permission.READ_EXTERNAL_STORAGE;
@@ -174,7 +206,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     }
     private void progress(long checked,long indexed,long skipped,String label,boolean done){try{scanStatus=new JSONObject().put("checked",checked).put("indexed",indexed).put("skipped",skipped).put("label",label).put("done",done);event("progress",scanStatus,scanError);}catch(Exception ignored){}}
     private void progressDone(String error){scanError=error;progress(scanStatus.optLong("checked"),scanStatus.optLong("indexed"),scanStatus.optLong("skipped"),error.isEmpty()?"Library ready":"Scan stopped",true);}
-    @Override protected void onResume(){super.onResume();foreground=true;web.onResume();handler.removeCallbacks(ticker);handler.post(ticker);}
+    private void updateSystemBars(){if(web==null)return;androidx.core.view.WindowInsetsControllerCompat controls=androidx.core.view.WindowCompat.getInsetsController(getWindow(),web);controls.setSystemBarsBehavior(androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);if(immersivePlayer)controls.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());else{controls.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars());if(getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE)controls.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars());else controls.show(androidx.core.view.WindowInsetsCompat.Type.statusBars());}}
+    @Override public void onConfigurationChanged(android.content.res.Configuration configuration){super.onConfigurationChanged(configuration);updateSystemBars();}
+    @Override protected void onResume(){super.onResume();updateSystemBars();foreground=true;web.onResume();handler.removeCallbacks(ticker);handler.post(ticker);}
     @Override protected void onPause(){foreground=false;handler.removeCallbacks(ticker);web.onPause();super.onPause();}
     @Override protected void onDestroy(){foreground=false;cancelled.set(true);handler.removeCallbacksAndMessages(null);worker.shutdownNow();
         if(controllerFuture!=null)MediaController.releaseFuture(controllerFuture);if(web!=null){bridge=null;web.destroy();}super.onDestroy();}

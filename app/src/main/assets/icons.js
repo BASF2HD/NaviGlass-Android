@@ -1,4 +1,11 @@
-const paths={play:'M8 5l11 7-11 7Z',pause:'M8 5v14M16 5v14',previous:'M5 5v14M19 5L8 12l11 7Z',next:'M19 5v14M5 5l11 7-11 7Z',shuffle:'M3 6h3c5 0 7 12 12 12h3M17 14l4 4-4 4M3 18h3c2 0 4-3 6-6s4-6 6-6h3M17 2l4 4-4 4',repeat:'M4 7h14l-3-3M20 17H6l3 3M18 7a4 4 0 0 1 2 7M6 17a4 4 0 0 1-2-7',heart:'M20.5 4.7a5.1 5.1 0 0 0-7.2 0L12 6l-1.3-1.3a5.1 5.1 0 0 0-7.2 7.2L12 20.4l8.5-8.5a5.1 5.1 0 0 0 0-7.2Z',search:'M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',menu:'M3 6h18M3 12h18M3 18h18',close:'M6 6l12 12M6 18L18 6',left:'M15 5l-7 7 7 7',right:'M9 5l7 7-7 7',plus:'M12 5v14M5 12h14'};
-export function icon(button,name,filled=false){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');svg.setAttribute('width','22');svg.setAttribute('height','22');
- svg.setAttribute('fill',filled?'currentColor':'none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','1.8');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');
- const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',paths[name]||paths.play);svg.append(path);button.replaceChildren(svg);}
+// Icons extracted without redrawing from the original NaviGlass interface.
+export function icon(element, name, filled = false) {
+  const image = document.createElement("img");
+  image.src =
+    "icons/" + (name === "heart" && !filled ? "heart-outline" : name) + ".svg";
+  image.alt = "";
+  image.setAttribute("aria-hidden", "true");
+  image.width = 22;
+  image.height = 22;
+  element.replaceChildren(image);
+}

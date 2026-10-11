@@ -33,7 +33,7 @@ final class Track {
     JSONObject json(boolean favourite) {
         JSONObject j = new JSONObject();
         try { j.put("id",id).put("albumId",albumId).put("title",title).put("artist",artist).put("album",album)
-            .put("year",year).put("number",number).put("disc",disc).put("duration",duration).put("favourite",favourite); }
+            .put("year",year).put("number",number).put("disc",disc).put("duration",duration).put("favourite",favourite).put("mime",mime).put("size",size).put("sourceLabel",source!=null&&source.startsWith("navidrome:")?"Navidrome":"Local library"); }
         catch(Exception ignored) {}
         return j;
     }

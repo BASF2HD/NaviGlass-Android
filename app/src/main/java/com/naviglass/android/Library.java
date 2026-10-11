@@ -51,7 +51,7 @@ final class Library extends SQLiteOpenHelper {
     }
     JSONArray albums() {
         JSONArray result=new JSONArray();
-        String query="SELECT album_id,MIN(album) album,MIN(artist) artist,MIN(year) year,COUNT(*) count,MIN(id) cover_id FROM tracks GROUP BY album_id ORDER BY album COLLATE NOCASE,year";
+        String query="SELECT album_id,MIN(album) album,MIN(artist) artist,MIN(year) year,COUNT(*) count,MIN(id) cover_id FROM tracks WHERE source NOT LIKE 'navidrome:%' GROUP BY album_id ORDER BY album COLLATE NOCASE,year";
         try(Cursor c=getReadableDatabase().rawQuery(query,null)) {
             while(c.moveToNext()) {JSONObject j=new JSONObject();try {
                 j.put("id",Track.text(c,"album_id")).put("title",Track.text(c,"album")).put("artist",Track.text(c,"artist"))
@@ -64,10 +64,12 @@ final class Library extends SQLiteOpenHelper {
         String query="SELECT t.*,CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END fav FROM tracks t LEFT JOIN favourites f ON f.track_id=t.id ";
         String[] args;
         if(mode.equals("album")) {query+="WHERE t.album_id=? ORDER BY t.disc,t.number,t.title COLLATE NOCASE";args=new String[]{value};}
+        else if(mode.equals("all")) {int offset;try{offset=Integer.parseInt(value);}catch(Exception e){offset=0;}offset=Math.max(0,Math.min(1000000,offset));query+="WHERE t.source NOT LIKE 'navidrome:%' ORDER BY t.title COLLATE NOCASE,t.artist,t.album LIMIT 200 OFFSET ?";args=new String[]{String.valueOf(offset)};}
+        else if(mode.equals("artist")){query+="WHERE t.artist=? AND t.source NOT LIKE 'navidrome:%' ORDER BY t.album,t.disc,t.number";args=new String[]{value};}
         else if(mode.equals("favourites")) {query+="WHERE f.track_id IS NOT NULL ORDER BY t.album COLLATE NOCASE,t.disc,t.number";args=new String[0];}
         else if(mode.equals("playlist")) {query+="JOIN playlist_tracks p ON p.track_id=t.id WHERE p.playlist_id=? ORDER BY p.position";args=new String[]{value};}
-        else {query+="WHERE t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\' OR t.album LIKE ? ESCAPE '\\' ORDER BY t.album,t.number LIMIT 200";
-            String term="%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";args=new String[]{term,term,term};}
+        else {query+="WHERE t.source NOT LIKE 'navidrome:%' AND (t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\' OR t.album LIKE ? ESCAPE '\\' ) ORDER BY CASE WHEN t.title LIKE ? ESCAPE '\\' THEN 0 WHEN t.title LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,t.title COLLATE NOCASE,t.album,t.number LIMIT 200";
+            String term="%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";args=new String[]{term,term,term,term.substring(1),term};}
         JSONArray result=new JSONArray();
         try(Cursor c=getReadableDatabase().rawQuery(query,args)) {while(c.moveToNext())result.put(Track.read(c).json(Track.value(c,"fav")!=0));}
         return result;

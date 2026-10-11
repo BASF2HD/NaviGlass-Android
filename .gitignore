@@ -8,3 +8,4 @@ builds/
 .DS_Store
 node_modules/
 private/
+app/src/androidTest/assets/test-server.p12

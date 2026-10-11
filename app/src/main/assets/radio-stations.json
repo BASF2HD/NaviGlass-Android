@@ -1,0 +1,46 @@
+[
+  {
+    "id": "radio:groovesalad",
+    "title": "Groove Salad",
+    "genre": "Ambient & downtempo",
+    "provider": "SomaFM",
+    "url": "https://ice6.somafm.com/groovesalad-128-mp3",
+    "favicon": "https://somafm.com/img3/groovesalad-400.jpg",
+    "homepage": "https://somafm.com/groovesalad/",
+    "codec": "MP3",
+    "bitRate": 128
+  },
+  {
+    "id": "radio:dronezone",
+    "title": "Drone Zone",
+    "genre": "Deep ambient",
+    "provider": "SomaFM",
+    "url": "https://ice6.somafm.com/dronezone-128-mp3",
+    "favicon": "https://somafm.com/img3/dronezone-400.jpg",
+    "homepage": "https://somafm.com/dronezone/",
+    "codec": "MP3",
+    "bitRate": 128
+  },
+  {
+    "id": "radio:indiepop",
+    "title": "Indie Pop Rocks!",
+    "genre": "Indie & alternative",
+    "provider": "SomaFM",
+    "url": "https://ice6.somafm.com/indiepop-128-mp3",
+    "favicon": "https://somafm.com/img3/indiepop-400.jpg",
+    "homepage": "https://somafm.com/indiepop/",
+    "codec": "MP3",
+    "bitRate": 128
+  },
+  {
+    "id": "radio:lush",
+    "title": "Lush",
+    "genre": "Mellow vocals & electronic",
+    "provider": "SomaFM",
+    "url": "https://ice6.somafm.com/lush-128-mp3",
+    "favicon": "https://somafm.com/img3/lush-400.jpg",
+    "homepage": "https://somafm.com/lush/",
+    "codec": "MP3",
+    "bitRate": 128
+  }
+]

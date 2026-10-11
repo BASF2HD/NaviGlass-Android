@@ -1,83 +1,118 @@
-# NaviGlass Android
+# NaviGlass — Android build
 
-A local music player that brings NaviGlass Cover Flow to Android. Browse your albums, choose a song, and keep listening when you lock the screen.
+A dedicated Android music player with NaviGlass's black Cover Flow, reflections, top seek bar and bottom playback/browse controls. Local music works without an account; Navidrome and internet radio are optional.
 
-This is a **private, early testing project**, not a Play Store release. It is independent of the existing desktop/web players; those projects are not modified by this app.
+This is a public early-testing project, not a production or Play Store release. The app name is **NaviGlass**; Android identifies this repository/platform, not the product name. Development stays separate from the original NaviGlassPlayer and PiTunes apps.
 
-<img src="docs/screenshots/portrait.png" alt="Portrait Cover Flow design preview with synthetic covers" width="300">
+**Download: [NaviGlass 0.2.4 for Android — test APK](https://github.com/BASF2HD/NaviGlass-Android/releases/tag/v0.2.4).** Android 10+ is required.
 
-![Landscape Cover Flow design preview with synthetic covers](docs/screenshots/landscape.png)
+**Current status: 0.2.4 test APK built after UI-review approval.** It includes grey-off/bright-on shuffle and repeat states, title-first search ranking, a speaker-anchored vertical volume popover, a wider landscape seek bar and shorter landscape transport. It also includes the native media-session permissions repair. Build/lint, nine JVM tests and three focused emulator suites pass. Install over the earlier test build; package ID and debug signer are unchanged. This is not production or physical-phone certification.
 
-These screenshots use invented albums and artwork. The browser preview simulates controls for design testing; the APK uses real native playback, not that simulation.
+<img src="docs/screenshots/portrait.png" alt="Portrait player with synthetic albums" width="300">
 
-## What is included
+![Landscape player with compact controls and wider seek bar](docs/screenshots/landscape.png)
 
-- Swipeable, animated Cover Flow with aligned side covers and reflections, adapted from NaviGlass's existing renderer.
-- Native Media3 playback: play/pause, previous/next, seeking, shuffle, repeat, audio focus and unplugged-headphone handling.
-- A media playback service and Android media session for background listening and system playback controls.
-- Device music discovery through Android's MediaStore, or read-only access to a selected music folder through Android's folder picker.
-- Cached album/song metadata, scan progress, cancellation and reuse of unchanged selected-folder metadata.
-- Search by song, artist or album; favourites and named playlists stored on the device.
-- Embedded cover extraction to a bounded cache, at up to 512 pixels. Only nearby Cover Flow textures are loaded, and the scene stops scheduling frames when idle or hidden.
-- Portrait and landscape layouts, ellipsised captions, reduced-motion support and a small-space Cover Flow app icon.
+<img src="docs/screenshots/modes-portrait.png" alt="Shuffle and repeat highlighted when enabled" width="300"> <img src="docs/screenshots/volume-portrait.png" alt="Vertical volume control opens directly below the speaker" width="300">
 
-## Requirements and formats
+<img src="docs/screenshots/drawer-portrait.png" alt="Full-width portrait song drawer with album favourite header" width="300">
 
-Android **10 or later**, with an up-to-date Android System WebView and WebGL support. The test APK works on both ARM and x86 Android devices; no processor-specific native libraries are included.
+All project screenshots use invented albums and artwork. The browser preview simulates local songs; radio uses live online audio. Real local/remote song playback uses native Media3 in the APK.
 
-The selected-folder scanner recognises MP3, FLAC, WAV/WAVE, M4A/M4B, AAC, Ogg/OGA and Opus. Actual playback depends on the file's container/codec and the device's decoder support. Archives and DRM-protected music are not supported. Artwork is read from embedded song metadata; loose `folder.jpg` discovery is not included yet.
+## Player and browsing
 
-## Try the test APK
+- Swipeable Cover Flow with aligned side covers, clipped reflections and smooth album transitions.
+- Top audio seek slider, elapsed/duration display, repeat, search, volume and shuffle.
+- Previous/play/pause/next, album-browse slider and song-drawer toggle above the six bottom navigation items: **Albums, Songs, Artists, Playlist, More, Settings**.
+- Portrait and landscape layouts, artwork-relative caption sizing and bounded, ellipsised titles. Bottom navigation opens anchored drop-up menus instead of page-sized panels. All Songs browses one cover per song; artist and playlist selections also update Cover Flow.
+- Portrait song drawer slides up from the bottom and fills the phone width. Landscape uses the original wider, centred drawer. Header contains album name, song count, favourite-album heart and close. Rows contain number, title/artist, duration and a three-dot action menu in every song list. There is no Play all button; choosing a song queues that album/list and keeps the drawer open.
+- Live case-insensitive substring search of song title, artist and album. Title-prefix matches rank first, then other title matches, then artist/album matches, with title A–Z within each group; typing stays focused while results update. Search and 200-song pages, artists from loaded albums, device-saved song/album favourites and named playlists. Song actions include Add to playlist, Favourite and More info. Menus stay inside the viewport, including the last scrolled row.
+- Square, proportional playback buttons and separated navigation underline. Immersive mode hides the bottom menus/browse slider and keeps floating previous/play/next controls. Playing-song captions show album name | year.
+- Albums, Songs, Artists and Playlist menus offer title A–Z and year ascending/descending sorting; choices persist.
+- Shuffle and repeat are grey when disabled and visibly highlighted when enabled; Repeat Song alone shows the 1 glyph. Shuffle changes the playback order. Repeat cycles Off → All → Song: All wraps the current queue; Song repeats the current track automatically without preventing manual skips. With shuffle/repeat off, an album queue continues into the next browsed album; previous at its first song goes to the prior album’s last song. The end of the entire collection stops.
+- Playing rows use the original animated three-bar marker (static with reduced motion), with a triangle when paused. Five seconds of idle browsing returns to the playing cover in the current collection; open menus/drawers/search or paused playback suppress this return.
+- Keyboard: Left/Right browse covers, Space toggles playback, Enter plays the selected entry, Down opens the song drawer, Up/Down selects a drawer row, Enter plays it, Escape dismisses overlays. Text fields retain normal keyboard input. Mouse wheel/trackpad and browse arrows also move covers.
+- Native audio focus, seeking, unplugged-headphone handling, Android media session and notifications. Locking the screen/Home retains background playback; dismissing the task from Recent Apps now stops it. Native local adjacent-album playback and background audio pass the emulator regression; actual Recent Apps dismissal still needs physical-device testing.
+- Full-view button appears only in landscape. Landscape uses larger album captions, shorter square transport, a smaller browse thumb and a wider top seek strip. Portrait control sizes are unchanged. The volume button opens a narrow vertical, light-dismiss popover directly beneath the speaker. Native source auto-hides the status bar in normal landscape; the browser cannot demonstrate Android system bars.
+- Favicon, welcome, Settings and Android launcher use the same Cover Flow logo.
+- Renderer stops scheduling animation frames when idle or the document is hidden. Nearby artwork textures and extracted artwork are cached with limits.
 
-1. Transfer `NaviGlass-Android-0.1.0-test.apk` from the project's local `builds/` folder to your Android phone.
-2. Open it and allow installation from the app you used to open the APK, if Android asks. This is a debug-signed development APK; keep it for testing, not production distribution.
-3. Tap **Load device music** and allow the music permission, or tap **Choose a music folder** to grant access only to that folder.
-4. Browse albums by swiping. Tap the centre cover or **View songs**, then choose a song or **Play all**.
-5. Use the bottom transport controls. Lock the phone to test background playback, and allow notifications when requested for visible playback controls.
-6. Open the library menu to search, refresh the selected source, view favourites or create playlists. The `+` beside a song adds it to a playlist.
+## Sources
 
-Previously indexed songs are available immediately on reopening. The first folder scan must read metadata and can be slower on removable or provider-backed storage. Device music uses Android's existing index and is usually quicker. If a folder moves or access expires, select it again.
+### Local music
 
-## Privacy and audio
+Use **Settings → Device music** for Android's existing media index, or **Choose folder** for read-only folder access. First folder indexing must read metadata; subsequent scans reuse unchanged metadata. Scan progress and cancellation are included. No music deletion or tag/artwork writing is supported.
 
-No login, analytics, advertisements, cloud upload or `INTERNET` permission. All UI libraries are packaged in the APK. The WebView is restricted to bundled assets and authorised cached artwork, with a main-frame, origin-scoped message bridge. Native session requests resolve only indexed song IDs; arbitrary playback URLs are not accepted. Android's folder picker grants read access, never write access. A storage provider selected by the user may have its own network behaviour; choose local device/SD-card storage for fully offline use.
+Android **10+**, an up-to-date Android System WebView and WebGL are required. MP3, FLAC, WAV/WAVE, M4A/M4B, AAC, Ogg/OGA and Opus are recognised. Actual playback depends on the device decoder and codec/container. DRM and archive extraction are not supported. Artwork is extracted from embedded metadata; loose folder.jpg discovery is not included yet.
 
-The app does not delete songs, write tags or change original artwork. It does not transcode or re-encode your music. Android still decodes audio and may resample it through the system audio path, Bluetooth or the output device; this is not a bit-perfect/DAC certification.
+### Navidrome
 
-App data is excluded from Android cloud backup/device transfer. Clearing app data removes the index, favourites, playlists and saved queue, not your music.
+Use **Settings → Connect Navidrome**. Enter the HTTPS Navidrome URL, username and password on the device. The original NaviGlass homepage is recognised automatically: if its root is not a Subsonic API, Android checks the same-host **/navidrome** proxy path. You can also enter that path explicitly. Android does not require a desktop development proxy.
 
-## Build from source
+Login uses salted-token Subsonic authentication. As in the original player, token rejection can fall back to encoded-password authentication under HTTPS only. Direct approved HTTP remains token-only. Stored credentials are encrypted with Android Keystore AES-GCM, excluded from backup and never included in web-preview storage, source code or Git. Disconnect forgets the login and clears current remote playback. Native-only requests resolve authenticated artwork/streams; passwords and authenticated URLs are not sent back into the renderer.
 
-Install JDK 17 and the Android SDK. Set `JAVA_HOME` and `ANDROID_HOME` to their locations, or configure an ignored `local.properties` with `sdk.dir`. Install Android platform 36 and build tools 36.0.0, accepting the SDK terms yourself.
+The first 500 albums are loaded alphabetically. **Load next 500 albums** in Settings extends the collection. Album tracks, song search, artwork and server playlists are supported. Server playlists are read-only. Favourites and playlists created in this Android build are stored on the device, not synchronised to server stars/playlists.
+
+Streams request **format=raw**: the app does not request Navidrome transcoding or re-encode songs. Device audio output/Bluetooth may still resample; this is not bit-perfect certification. Availability depends on server connectivity and decoder support. **A publicly accessible HTTPS server does not require Tailscale.** Only a direct private/tailnet route needs access to that network.
+
+HTTPS is the default. The published test APK is HTTPS-only and contains no private server address or preloaded account. A source build can optionally enable one explicitly approved Tailscale IPv4 HTTP host, with the exact port enforced in native validation; no broad HTTP switch is provided. No private endpoint is committed.
+
+### Internet radio
+
+Open **More → Internet radio browser**. Four SomaFM starter stations are bundled. Search [Radio Browser](https://docs.radio-browser.info/) with one station-name box: results load as you type, or press Enter. There are no country/language/genre filter controls. Paged results and loading/error feedback are included. Validated HTTPS progressive and HLS streams are accepted; HLS playback is bundled in native Media3. HTTP/private-literal URLs are excluded. The native directory discovers official mirrors and retries another mirror on failure. Broadcasters and directory availability vary.
+
+Stations show provider artwork where available, with a music-icon fallback. Save stations locally and reopen them from **More → Saved radio stations**. Saves persist on this device/browser, not on Navidrome. Station actions offer Play, Save/Remove and More info.
+
+Play/pause and previous/next work for radio queues. Live streams cannot be sought and do not support song shuffle/repeat/favourites. Streaming and searches use internet data. The directory and broadcasters receive your network address and may log requests; no account is required.
+
+## Install the 0.2.4 test APK
+
+Download the APK and optional SHA-256 checksum from the [0.2.4 GitHub test release](https://github.com/BASF2HD/NaviGlass-Android/releases/tag/v0.2.4).
+
+1. Transfer **NaviGlass-Android-0.2.4-test.apk** from the GitHub release to your phone. It updates the earlier test APK without uninstalling.
+2. Open it and permit installation from that source if Android asks. It is debug-signed and intended for testing, not production distribution.
+3. Choose local device music/folder, or connect Navidrome in Settings. Credentials must be entered on the device; none are preloaded.
+4. Swipe covers or use the browse slider. Open an album drawer and select a song.
+5. Rotate the phone, use seeking, then lock it to check background playback and notification controls.
+6. Check radio under More. Allow notification permission if requested.
+
+Indexed local metadata is available on reopening. Expired/moved folder permissions require choosing the folder again. The APK contains no architecture-specific native libraries and can run on ARM and x86 Android devices.
+
+## Privacy and limits
+
+No analytics, advertisements or music upload. No mandatory account. Local access is read-only. All scripts/libraries are bundled. The WebView permits bundled assets and authorised artwork only, with a main-frame, origin-scoped message bridge. Media sessions accept indexed/authorised track or station IDs, not arbitrary playback URLs. HTTPS redirects are refused and platform certificate validation remains enabled.
+
+Clearing app data removes metadata, favourites, playlists and login—not music files. Optional remote access uses the configured server. A selected storage provider may itself use a network connection.
+
+Physical-phone, SD-card, Bluetooth, large-library and manufacturer battery-management testing is still required. Emulator success is not universal device certification. Original desktop features such as advanced menus/settings, playlist synchronisation, equalizer, gapless certification, Android Auto browsing, archive support and production signing are not complete. This is an Android adaptation, not yet full feature parity with every original desktop option.
+
+The thumbnail library grid is limited to 120 albums; Cover Flow browses all loaded albums. Searches/pages return at most 200 songs, remote album pages contain at most 500 albums, queues at most 10,000 songs, folder scans at most 100,000 songs and 50,000 directories. Overlapping local device/folder indexes can produce duplicate albums. Navidrome tracks/artwork need network access and are not downloaded for offline listening.
+
+## Build and test
+
+Use JDK 17, Android SDK platform 36 and build tools 36.0.0. Set JAVA_HOME and ANDROID_HOME or an ignored local.properties with sdk.dir. Gradle 8.13 and its checksum, and Android Gradle Plugin 8.13.2 are pinned. First builds download dependencies from Google Maven/Maven Central.
 
 ```sh
 ./gradlew :app:assembleDebug :app:lintDebug :app:testDebugUnitTest
 ```
 
-Output: `app/build/outputs/apk/debug/app-debug.apk`. Gradle 8.13 is pinned with its distribution SHA-256; Android Gradle Plugin is 8.13.2. Dependencies are resolved from Google Maven/Maven Central on the first build. Android Studio is optional for command-line builds.
+Output: app/build/outputs/apk/debug/app-debug.apk. No Android Studio installation is required for command-line builds.
 
-For the synthetic integration test, use a clean emulator, grant the target app music permission, then run:
+Native integration tests require a **clean emulator**, internet for real radio checks, and a generated, ignored test-only PKCS12 HTTPS fixture. See [validation notes](docs/VALIDATION.md). Never run development tests against a personal music library. No production signing key is included.
+
+For the current Mac design review, run:
 
 ```sh
-./gradlew :app:connectedDebugAndroidTest
+node tools/preview.mjs
 ```
 
-The integration test creates and removes only its own synthetic song in the emulator. Do not run development tests against a personal music library. The short tone and invented artwork in test assets are original test fixtures.
+Open http://127.0.0.1:8769/?v=0.2.4 and choose **Explore demo covers**. Use portrait/landscape window sizes to review the layouts. The loopback-only server supplies a bounded, validated radio-artwork cache and live directory failover. Synthetic local songs use a simulated clock, not actual music; radio uses live audio. Navidrome login intentionally works only in the native app. No credentials enter this preview. The browser is not a substitute for native playback/system-bar/task-dismiss testing.
 
-The bundled HTML can also be served from `app/src/main/assets` by a local static server. **Explore demo covers** is explicitly a browser design preview, not a web music player or a substitute for APK testing.
+Current verification: APK build/lint and nine JVM unit tests pass; PlaybackReviewIntegrationTest, ServerIntegrationTest and LayoutIntegrationTest pass on the isolated emulator. They check native local queue transitions, actual OFF/ON icon brightness, native volume, A–Z SQLite search ranking, synthetic HTTPS login/raw streaming and encrypted restoration, and layout/touch/rotation. Browser playback/search/keyboard/mouse/sorting/radio persistence checks pass, and ten matching source/implementation visual states have been reviewed. Personal-server login and physical-phone behaviour are not certified. See the validation and design reports for evidence and limits.
 
-## Current limits
+See [original-player parity analysis](docs/ORIGINAL-PARITY.md), [design comparison](design-qa.md) and [third-party notices](THIRD-PARTY-NOTICES.md). The source is public for inspection, but no open-source licence has yet been granted for the project's own code. Third-party components retain their own licences.
 
-This first build needs testing on real phones, SD-card providers, large libraries, Bluetooth devices and manufacturer battery-management settings. A successful emulator run does not guarantee compatibility with every phone. There is no equalizer, gapless certification, Android Auto browser integration, network streaming, album tagging, archive extraction, import/export of playlists or production signing setup yet. Overlapping device and selected-folder scans can show duplicate albums, since their permissions and identifiers are indexed separately. The library thumbnail grid shows the first 120 albums; Cover Flow browses all albums and song search returns at most 200 matching songs. Selected-folder scans are capped at 100,000 songs and 50,000 directories; queues are capped at 10,000 songs.
+## Platforms and tester feedback
 
-Before a public release: test multiple physical devices, finalise supported codecs and library-source behaviour, complete an accessibility review, set up a private production signing key and complete release/security review. No signing keys, computer paths, private emails or personal names belong in Git.
+The [main NaviGlassPlayer project](https://github.com/BASF2HD/NaviGlassPlayer) is the shared download/discovery hub. Android source and APK versions stay in this dedicated repository; the APK cannot run on iOS. An iOS adaptation is planned, not built or available yet. Apple beta distribution will need TestFlight or another supported Apple distribution route.
 
-## Project structure
-
-- `app/src/main/java/com/naviglass/android/`: activity/secure bridge, library cache/scanner, track model and native playback service.
-- `app/src/main/assets/`: offline mobile UI, Cover Flow renderer, small numeric tween engine, synthetic browser preview and bundled Three.js.
-- `app/src/main/res/`: Android icon, theme and privacy rules.
-- `app/src/test/` and `app/src/androidTest/`: JVM checks and synthetic emulator integration test.
-- `docs/`: screenshots and validation notes.
-
-See [third-party notices](THIRD-PARTY-NOTICES.md). No open-source licence is granted for the project's own code at this private testing stage.
+Please report device model, Android/WebView version, portrait or landscape, steps to reproduce and a redacted screenshot in [Issues](https://github.com/BASF2HD/NaviGlass-Android/issues). Never include passwords, authenticated stream URLs or a private library screenshot without reviewing it first. Check shuffle/repeat, album boundaries, search, volume, rotation, background playback and Recent Apps dismissal.

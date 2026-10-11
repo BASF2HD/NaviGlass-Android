@@ -713,7 +713,11 @@ function _computeDynamicCenterScale(viewportWidth, viewportHeight) {
     const isTouchLandscape = Boolean(
         window.matchMedia?.("(hover: none) and (pointer: coarse) and (max-width: 932px) and (orientation: landscape)")?.matches
     );
-    const heightFillRatio = (isTouchLandscape || (safeWidth > safeHeight && safeHeight < 400)) ? 0.58 : 0.72;
+    // Short native windows lose space to Android system bars. Reserve a
+    // readable caption and square transport rather than squeezing either.
+    const heightFillRatio = safeHeight < 600
+        ? Math.min(.58, Math.max(.30, (safeHeight - 164) / safeHeight))
+        : .72;
     const fovRadians = BASE_FOV * (Math.PI / 180);
     const projectedCoverAtScaleOne =
         safeHeight * PLANE_HEIGHT / (2 * Math.tan(fovRadians / 2) * CAMERA_Z);
@@ -737,6 +741,9 @@ function _handleResize(container) {
     camera.aspect = width / height;
     camera.fov = _computeDynamicFov(height);
     currentCenterScale = _computeDynamicCenterScale(width, height);
+    const pxPerWorld=height/(2*Math.tan(BASE_FOV*Math.PI/360)*CAMERA_Z);
+    const top=height<600?32:Math.max(48,height*.055);
+    naviglassplayerOffsetY=(height/2-top-(PLANE_HEIGHT*currentCenterScale*pxPerWorld)/2)/pxPerWorld;
     camera.updateProjectionMatrix();
     currentSideCount = computeVisibleSideCount(width);
     if (albumTextures.length && currentSlideIndex >= 0) {
