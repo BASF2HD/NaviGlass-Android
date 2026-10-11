@@ -244,7 +244,7 @@ export function getActiveCoverBounds() {
 
 export function loadTexture(url) {
     if (!url) return Promise.resolve(defaultTexture);
-    if (textureCache.has(url)) return Promise.resolve(textureCache.get(url));
+    if (textureCache.has(url)) { const texture = textureCache.get(url); textureCache.delete(url); textureCache.set(url, texture); return Promise.resolve(texture); }
 
     return new Promise((resolve) => {
         const img = new Image();
@@ -845,7 +845,7 @@ class SlideCard extends THREE.Object3D {
 
 // Release GPU artwork only after the old animation window is pruned.
 export function retainTextures(urls) {
-    for (const [url, texture] of textureCache) if (!urls.has(url)) {
+    for (const [url, texture] of textureCache) if (textureCache.size > Math.max(48, urls.size) && !urls.has(url)) {
         textureCache.delete(url); texture.dispose();
     }
 }

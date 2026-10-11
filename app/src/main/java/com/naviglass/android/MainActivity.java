@@ -42,12 +42,17 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private MediaController player;
     private ListenableFuture<MediaController> controllerFuture;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
+    private final ExecutorService syncWorker=Executors.newSingleThreadExecutor();
+    private final AtomicBoolean syncRunning=new AtomicBoolean();
     private final AtomicBoolean cancelled=new AtomicBoolean();
     private final Handler handler=new Handler(Looper.getMainLooper());
     private boolean scanning,foreground,immersivePlayer;
     private JSONObject scanStatus;
+    private JSONObject summaryCache;
+    private final java.util.concurrent.atomic.AtomicInteger collectionRequest=new java.util.concurrent.atomic.AtomicInteger();
     private String scanError="";
     private final Runnable ticker=new Runnable(){public void run(){if(foreground){state();handler.postDelayed(this,500);}}};
+    private final Runnable serverRefresh=new Runnable(){public void run(){if(!foreground)return;if(NetworkSources.active(MainActivity.this)&&syncRunning.compareAndSet(false,true))syncWorker.execute(()->{try{if(NetworkSources.refreshIfDue(MainActivity.this))runOnUiThread(()->{if(!isDestroyed())catalog();});}catch(Exception ignored){/* Keep the last complete snapshot when offline. */}finally{syncRunning.set(false);}});handler.postDelayed(this,60000);}};
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);web=new WebView(this);
         android.widget.FrameLayout root=new android.widget.FrameLayout(this);root.setBackgroundColor(0xff08080f);root.addView(web);setContentView(root);
@@ -104,6 +109,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         String id=request.optString("id");if(id.length()>80)throw new IllegalArgumentException("Invalid request");
         String action=request.optString("action");
         switch(action){
+            case "browseCancel":collectionRequest.incrementAndGet();respond(id,new JSONObject());break;
             case "ready": respond(id,new JSONObject().put("native",true).put("scanning",scanning));catalog();state();if(scanStatus!=null)event("progress",scanStatus,scanError);break;
             case "device": NetworkSources.local(this);permissionAndScan();respond(id,new JSONObject());break;
             case "folder": NetworkSources.local(this);chooseFolder();respond(id,new JSONObject());break;
@@ -139,11 +145,13 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
             case "immersive":immersivePlayer=request.optBoolean("enabled");updateSystemBars();respond(id,new JSONObject());break;
             case "serverDisconnect":if(player!=null&&player.getCurrentMediaItem()!=null&&player.getCurrentMediaItem().mediaId.startsWith("nd_")){player.pause();player.clearMediaItems();}NetworkSources.disconnect(this);respond(id,new JSONObject());catalog();break;
             default:
+                final int collectionToken=collectionRequest.get();
                 worker.execute(()->{try{
                     Library library=Library.get(this);JSONObject result=new JSONObject();
                     switch(action){
                         case "tracks": String mode=request.optString("mode","album");if(!java.util.Arrays.asList("album","all","favourites","playlist","search","artist","serverPlaylist").contains(mode))throw new IllegalArgumentException("Unknown view");
-                            String value=request.optString("value").substring(0,Math.min(request.optString("value").length(),200));result.put("albumStarred",value.startsWith("nd:")?NetworkSources.albumStarred(this,value):getSharedPreferences("album-favourites",0).getBoolean("local:"+value,false));result.put("tracks",NetworkSources.active(this)||mode.equals("serverPlaylist")||value.startsWith("nd:")?NetworkSources.tracks(this,mode,value):library.tracks(mode,value));break;
+                            String value=request.optString("value").substring(0,Math.min(request.optString("value").length(),200));result.put("albumStarred",value.startsWith("nd:")?NetworkSources.albumStarred(this,value):getSharedPreferences("album-favourites",0).getBoolean("local:"+value,false));result.put("tracks",NetworkSources.active(this)||mode.equals("serverPlaylist")||value.startsWith("nd:")?NetworkSources.tracks(this,mode,value,()->collectionToken!=collectionRequest.get()):library.tracks(mode,value));break;
+                        case "artistAlbums":String artist=request.optString("value");JSONArray artistList=new JSONArray();if(NetworkSources.active(this))artistList=NetworkSources.artistAlbums(this,artist);else{java.util.HashSet<String> artistIds=new java.util.HashSet<>();JSONArray songs=library.tracks("artist",artist);for(int i=0;i<songs.length();i++)artistIds.add(songs.getJSONObject(i).getString("albumId"));JSONArray localAlbums=library.albums();for(int i=0;i<localAlbums.length();i++)if(artistIds.contains(localAlbums.getJSONObject(i).getString("id")))artistList.put(localAlbums.getJSONObject(i));}result.put("albums",artistList);break;
                         case "albumFavourite":String album=request.getString("album");if(album.length()>200)throw new IllegalArgumentException("Invalid album");String albumKey=(NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:")+album;android.content.SharedPreferences favAlbums=getSharedPreferences("album-favourites",0);boolean starred=album.startsWith("nd:")?NetworkSources.toggleAlbum(this,album):!favAlbums.getBoolean(albumKey,false);if(!album.startsWith("nd:"))favAlbums.edit().putBoolean(albumKey,starred).apply();result.put("albumStarred",starred);break;
                         case "favourite":result.put("favourite",NetworkSources.toggleSong(this,request.getString("track")));break;
                         case "playlists":JSONArray lists=library.playlists();if(NetworkSources.active(this)){JSONArray remote=NetworkSources.playlists(this);for(int i=0;i<remote.length();i++)lists.put(remote.getJSONObject(i));}result.put("playlists",lists);break;
@@ -160,6 +168,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                         case "addPlaylist":library.addToPlaylist(request.getString("playlist"),request.getString("track"));break;
                         default:throw new IllegalArgumentException("Unknown action");
                     }
+                    if(!java.util.Arrays.asList("tracks","artistAlbums","playlists","trackInfo","radioSaved","radioSearch","serverStatus").contains(action))summaryCache=null;
                     result.put("summary",summary());final JSONObject response=result;runOnUiThread(()->respond(id,response));
                 }catch(Exception e){runOnUiThread(()->failure(id,e));}});
         }
@@ -184,9 +193,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         event("state",s,"");
     }catch(Exception ignored){}}
     private JSONObject summary()throws Exception{
-        JSONObject out=new JSONObject();JSONArray list=NetworkSources.active(this)?NetworkSources.albums(this):Library.get(this).albums();long songs=0;int favourites=0;java.util.HashSet<String> artists=new java.util.HashSet<>();for(int i=0;i<list.length();i++){JSONObject a=list.getJSONObject(i);songs+=a.optInt("count");artists.add(a.optString("artist"));if(NetworkSources.active(this)?a.optBoolean("starred"):getSharedPreferences("album-favourites",0).getBoolean("local:"+a.getString("id"),false))favourites++;}artists.remove("");return out.put("albums",list.length()).put("favouriteAlbums",favourites).put("songs",songs).put("favouriteSongs",NetworkSources.active(this)?NetworkSources.cached(this,"starredSongs").length():Library.get(this).tracks("favourites","").length()).put("artists",NetworkSources.active(this)?NetworkSources.cached(this,"artists").length():artists.size()).put("playlists",Library.get(this).playlists().length()+(NetworkSources.active(this)?NetworkSources.cached(this,"playlists").length():0)).put("radios",RadioDirectory.saved(this).length());
+        if(summaryCache!=null)return new JSONObject(summaryCache.toString());
+        JSONObject out=new JSONObject();JSONArray list=NetworkSources.active(this)?NetworkSources.albums(this):Library.get(this).albums();long songs=0;int favourites=0;java.util.HashSet<String> artists=new java.util.HashSet<>();for(int i=0;i<list.length();i++){JSONObject a=list.getJSONObject(i);songs+=a.optInt("count");artists.add(a.optString("artist"));if(NetworkSources.active(this)?a.optBoolean("starred"):getSharedPreferences("album-favourites",0).getBoolean("local:"+a.getString("id"),false))favourites++;}artists.remove("");summaryCache=out.put("albums",list.length()).put("favouriteAlbums",favourites).put("songs",songs).put("favouriteSongs",NetworkSources.active(this)?NetworkSources.cached(this,"starredSongs").length():Library.get(this).tracks("favourites","").length()).put("artists",NetworkSources.active(this)?NetworkSources.cached(this,"artists").length():artists.size()).put("playlists",Library.get(this).playlists().length()+(NetworkSources.active(this)?NetworkSources.cached(this,"playlists").length():0)).put("radios",RadioDirectory.saved(this).length());return new JSONObject(summaryCache.toString());
     }
-    private void catalog(){worker.execute(()->{try{if(NetworkSources.active(this))NetworkSources.ensureSynced(this);JSONArray list=NetworkSources.active(this)?NetworkSources.albums(this):Library.get(this).albums();String prefix=NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:";for(int i=0;i<list.length();i++){JSONObject album=list.getJSONObject(i);if(!NetworkSources.active(this))album.put("starred",getSharedPreferences("album-favourites",0).getBoolean(prefix+album.getString("id"),false));}JSONObject data=new JSONObject().put("albums",list).put("remote",NetworkSources.active(this)).put("summary",summary()).put("artists",NetworkSources.active(this)?NetworkSources.cached(this,"artists"):new JSONArray()).put("remembered",list.length()>0||NetworkSources.active(this)||getSharedPreferences("library-source",0).getBoolean("configured",false)||!getPreferences(MODE_PRIVATE).getString("tree","").isEmpty());runOnUiThread(()->event("catalog",data,""));}
+    private void catalog(){worker.execute(()->{try{summaryCache=null;if(NetworkSources.active(this))NetworkSources.ensureSynced(this);JSONArray list=NetworkSources.active(this)?NetworkSources.albums(this):Library.get(this).albums();String prefix=NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:";for(int i=0;i<list.length();i++){JSONObject album=list.getJSONObject(i);if(!NetworkSources.active(this))album.put("starred",getSharedPreferences("album-favourites",0).getBoolean(prefix+album.getString("id"),false));}JSONObject data=new JSONObject().put("albums",list).put("remote",NetworkSources.active(this)).put("source",NetworkSources.source(this)).put("summary",summary()).put("artists",NetworkSources.active(this)?NetworkSources.cached(this,"artists"):new JSONArray()).put("remembered",list.length()>0||NetworkSources.active(this)||getSharedPreferences("library-source",0).getBoolean("configured",false)||!getPreferences(MODE_PRIVATE).getString("tree","").isEmpty());runOnUiThread(()->event("catalog",data,""));}
         catch(Exception e){runOnUiThread(()->event("error",new JSONObject(),friendly(e)));}});}
     private void permissionAndScan(){if(scanning){event("error",new JSONObject(),"A scan is already running");return;}
         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_AUDIO:Manifest.permission.READ_EXTERNAL_STORAGE;
@@ -213,8 +223,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     private void progressDone(String error){scanError=error;progress(scanStatus.optLong("checked"),scanStatus.optLong("indexed"),scanStatus.optLong("skipped"),error.isEmpty()?"Library ready":"Scan stopped",true);}
     private void updateSystemBars(){if(web==null)return;androidx.core.view.WindowInsetsControllerCompat controls=androidx.core.view.WindowCompat.getInsetsController(getWindow(),web);controls.setSystemBarsBehavior(androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);if(immersivePlayer)controls.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());else{controls.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars());if(getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE)controls.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars());else controls.show(androidx.core.view.WindowInsetsCompat.Type.statusBars());}}
     @Override public void onConfigurationChanged(android.content.res.Configuration configuration){super.onConfigurationChanged(configuration);if(configuration.orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT){immersivePlayer=false;if(web!=null)web.evaluateJavascript("window.naviglassExitFullView?.()",null);}updateSystemBars();}
-    @Override protected void onResume(){super.onResume();updateSystemBars();foreground=true;web.onResume();handler.removeCallbacks(ticker);handler.post(ticker);}
-    @Override protected void onPause(){foreground=false;handler.removeCallbacks(ticker);web.onPause();super.onPause();}
-    @Override protected void onDestroy(){foreground=false;cancelled.set(true);handler.removeCallbacksAndMessages(null);worker.shutdownNow();
+    @Override protected void onResume(){super.onResume();updateSystemBars();foreground=true;web.onResume();handler.removeCallbacks(ticker);handler.post(ticker);handler.removeCallbacks(serverRefresh);handler.post(serverRefresh);}
+    @Override protected void onPause(){foreground=false;handler.removeCallbacks(ticker);handler.removeCallbacks(serverRefresh);web.onPause();super.onPause();}
+    @Override protected void onDestroy(){foreground=false;cancelled.set(true);handler.removeCallbacksAndMessages(null);worker.shutdownNow();syncWorker.shutdownNow();
         if(controllerFuture!=null)MediaController.releaseFuture(controllerFuture);if(web!=null){bridge=null;web.stopLoading();android.view.ViewParent parent=web.getParent();if(parent instanceof android.view.ViewGroup)((android.view.ViewGroup)parent).removeView(web);web.destroy();}super.onDestroy();}
 }

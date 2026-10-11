@@ -26,9 +26,12 @@ import org.json.JSONArray;
 /** Native-only network access. Credentials and authenticated URLs never enter the WebView. */
 final class NetworkSources {
     private static JSONObject account;
-    private static JSONArray remoteAlbums=new JSONArray();
-    private static String starredSnapshot="";
-    private static java.util.Set<String> starredIds=java.util.Collections.emptySet();
+    private static volatile JSONArray remoteAlbums=new JSONArray();
+    private static final class StarredIndex {
+        final String snapshot; final java.util.Set<String> ids;
+        StarredIndex(String snapshot,java.util.Set<String> ids){this.snapshot=snapshot;this.ids=ids;}
+    }
+    private static volatile StarredIndex starredIndex=new StarredIndex("",java.util.Collections.emptySet());
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences("server",Context.MODE_PRIVATE);}
     private static SecretKey key()throws Exception{KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);
         if(!store.containsAlias("naviglass-server")){KeyGenerator generator=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder("naviglass-server",KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());generator.generateKey();}
@@ -54,8 +57,7 @@ final class NetworkSources {
             proposed.put("url",base+"/navidrome");login(proposed);
         }
         if(prefs(c).contains("account"))migrateLegacy(c);
-        JSONArray initial=albumPage(proposed,0);String encrypted=encrypt(proposed.toString());synchronized(NetworkSources.class){account=proposed;remoteAlbums=initial;}
-        prefs(c).edit().clear().putString("account",encrypted).putString("albums",initial.toString()).putBoolean("active",true).commit();
+        JSONArray initial=albumPage(proposed,0);String encrypted=encrypt(proposed.toString());synchronized(NetworkSources.class){account=proposed;remoteAlbums=initial;prefs(c).edit().clear().putString("account",encrypted).putString("albums",initial.toString()).putBoolean("active",true).putLong("generation",System.currentTimeMillis()).commit();}
         refresh(c);
     }
     private static void login(JSONObject proposed)throws Exception {
@@ -71,9 +73,9 @@ final class NetworkSources {
         AuthenticationException(){super("Reached Navidrome, but it rejected the username/password (code 40). Use your Navidrome login, not your Tailscale login.");}
     }
     static JSONArray albums(Context c)throws Exception{if(remoteAlbums.length()==0)remoteAlbums=new JSONArray(prefs(c).getString("albums","[]"));return new JSONArray(remoteAlbums.toString());}
-    static JSONArray more(Context c)throws Exception{refresh(c);return albums(c);}
-    static void refresh(Context c)throws Exception{
-        JSONObject a=account(c);JSONArray all=new JSONArray();java.util.HashSet<String> seen=new java.util.HashSet<>();
+    static JSONArray more(Context c)throws Exception{prefs(c).edit().putLong("generation",prefs(c).getLong("generation",0)+1).commit();refresh(c);return albums(c);}
+    static boolean refresh(Context c)throws Exception{
+        JSONObject a=account(c);long startingGeneration=prefs(c).getLong("generation",0);JSONArray all=new JSONArray();java.util.HashSet<String> seen=new java.util.HashSet<>();
         for(int offset=0;offset<100000;offset+=500){JSONArray page=albumPage(a,offset);int added=0;for(int i=0;i<page.length();i++){JSONObject album=page.getJSONObject(i);if(seen.add(album.getString("id"))){all.put(album);added++;}}if(page.length()<500)break;if(added==0)throw new IllegalStateException("Navidrome repeated an album page; refresh could not complete");if(offset==99500)throw new IllegalStateException("Library exceeds 100000 albums");}
         JSONObject starred=api(a,"getStarred2",new JSONObject()).getJSONObject("starred2");
         JSONArray favouriteAlbums=starred.optJSONArray("album"),favouriteSongs=starred.optJSONArray("song");
@@ -81,42 +83,68 @@ final class NetworkSources {
         for(int i=0;i<all.length();i++)all.getJSONObject(i).put("starred",ids.contains(all.getJSONObject(i).getString("id")));
         JSONArray artists=new JSONArray();JSONObject artistRoot=api(a,"getArtists",new JSONObject()).getJSONObject("artists");JSONArray indexes=artistRoot.optJSONArray("index");if(indexes!=null)for(int i=0;i<indexes.length();i++){JSONArray entries=indexes.getJSONObject(i).optJSONArray("artist");if(entries!=null)for(int j=0;j<entries.length();j++)artists.put(entries.getJSONObject(j));}
         JSONArray radios=new JSONArray(),radioInput=api(a,"getInternetRadioStations",new JSONObject()).getJSONObject("internetRadioStations").optJSONArray("internetRadioStation");if(radioInput!=null)for(int i=0;i<radioInput.length();i++){JSONObject r=radioInput.getJSONObject(i);String address=r.optString("streamUrl");Uri uri=Uri.parse(address);if(uri.getHost()==null||uri.getUserInfo()!=null||!("https".equals(uri.getScheme())||"http".equals(uri.getScheme())))continue;radios.put(new JSONObject().put("id","radio:nd"+Library.key(a.getString("url")+":"+a.getString("username")+":"+r.getString("id"))).put("title",r.optString("name","Radio")).put("url",address).put("provider","Navidrome").put("remote",true).put("saved",true).put("homepage",r.optString("homePageUrl")));}
-        JSONArray mixes=playlists(c);JSONArray fav=favouriteSongs==null?new JSONArray():favouriteSongs;
+        JSONArray mixes=fetchPlaylists(a);JSONArray fav=favouriteSongs==null?new JSONArray():favouriteSongs;
         // Commit a complete snapshot only after every endpoint succeeds. Never replace a failed sync with empty favourites.
-        prefs(c).edit().putString("albums",all.toString()).putString("starredSongs",fav.toString()).putString("artists",artists.toString()).putString("radios",radios.toString()).putString("playlists",mixes.toString()).putLong("synced",System.currentTimeMillis()).commit();remoteAlbums=all;
-        normalizeTracks(c,fav,"");
+        if(account(c)!=a||!active(c))return false;
+        boolean changed=!fingerprint(all).equals(fingerprint(cached(c,"albums"))) || !fingerprint(fav).equals(fingerprint(cached(c,"starredSongs"))) || !fingerprint(artists).equals(fingerprint(cached(c,"artists"))) || !fingerprint(mixes).equals(fingerprint(cached(c,"playlists"))) || !fingerprint(radios).equals(fingerprint(cached(c,"radios")));
+        android.content.SharedPreferences.Editor snapshot=prefs(c).edit();
+        if(changed)snapshot.putLong("generation",prefs(c).getLong("generation",0)+1);
+        synchronized(NetworkSources.class){if(account(c)!=a||!active(c)||prefs(c).getLong("generation",0)!=startingGeneration)return false;
+        snapshot.putString("albums",all.toString()).putString("starredSongs",fav.toString()).putString("artists",artists.toString()).putString("radios",radios.toString()).putString("playlists",mixes.toString()).putLong("synced",System.currentTimeMillis()).commit();remoteAlbums=all;}
+        normalizeTracks(c,fav,"",a);
+        return changed;
     }
-    static void ensureSynced(Context c)throws Exception{migrateLegacy(c);if(prefs(c).getLong("synced",0)==0||System.currentTimeMillis()-prefs(c).getLong("synced",0)>300000)refresh(c);}
+    // First connection requires a snapshot; subsequent reads use it immediately.
+    static void ensureSynced(Context c)throws Exception{migrateLegacy(c);if(prefs(c).getLong("synced",0)==0)refresh(c);}
+    static String source(Context c)throws Exception{return active(c)?"navidrome:"+Library.key(account(c).getString("url")+":"+account(c).getString("username")):"local";}
+    private static String fingerprint(JSONArray values)throws Exception{java.util.ArrayList<String> rows=new java.util.ArrayList<>();for(int i=0;i<values.length();i++)rows.add(values.getJSONObject(i).toString());java.util.Collections.sort(rows);return rows.toString();}
+    static boolean refreshIfDue(Context c)throws Exception{if(!active(c)||System.currentTimeMillis()-prefs(c).getLong("synced",0)<300000)return false;return refresh(c);}
+    private static JSONObject cachedApi(Context c,String endpoint,JSONObject params)throws Exception{
+        JSONObject a=account(c);String key=Library.key(a.getString("url")+":"+a.getString("username"))+":"+prefs(c).getLong("generation",0)+":"+endpoint+":"+params.toString();
+        JSONObject result=CollectionCache.get(c,key,()->api(a,endpoint,params));if(account(c)!=a)throw new java.util.concurrent.CancellationException("Source changed");return result;
+    }
+    static JSONArray artistAlbums(Context c,String value)throws Exception {
+        String artistId="";JSONArray artists=cached(c,"artists");for(int i=0;i<artists.length();i++)if(value.equals(artists.getJSONObject(i).optString("name"))||value.equals(artists.getJSONObject(i).optString("id"))){artistId=artists.getJSONObject(i).getString("id");break;}
+        JSONArray out=new JSONArray();if(artistId.isEmpty())return out;
+        JSONArray ids=cachedApi(c,"getArtist",new JSONObject().put("id",artistId)).getJSONObject("artist").optJSONArray("album");
+        java.util.HashMap<String,JSONObject> lookup=new java.util.HashMap<>();JSONArray list=albums(c);for(int i=0;i<list.length();i++)lookup.put(list.getJSONObject(i).getString("id"),list.getJSONObject(i));
+        if(ids!=null)for(int i=0;i<ids.length();i++){JSONObject entry=lookup.get("nd:"+ids.getJSONObject(i).getString("id"));if(entry!=null)out.put(entry);}
+        return out;
+    }
     private static void migrateLegacy(Context c)throws Exception{
         JSONObject a=account(c);String legacy="navidrome:"+Library.key(a.getString("url")),scope=Library.key(a.getString("url")+":"+a.getString("username"));
         Library library=Library.get(c);java.util.ArrayList<Track> legacyTracks=new java.util.ArrayList<>();try(android.database.Cursor rows=library.getReadableDatabase().query("tracks",null,"source=?",new String[]{legacy},null,null,null)){while(rows.moveToNext())legacyTracks.add(Track.read(rows));}
         for(Track t:legacyTracks){android.content.ContentValues values=new android.content.ContentValues();values.put("source","navidrome:"+scope);values.put("uri",Uri.parse(t.uri).buildUpon().appendQueryParameter("account",scope).build().toString());library.getWritableDatabase().update("tracks",values,"id=?",new String[]{t.id});}
     }
     static JSONArray cached(Context c,String name)throws Exception{return new JSONArray(prefs(c).getString(name,"[]"));}
-    static synchronized boolean favourite(Context c,Track t){
+    static boolean favourite(Context c,Track t){
         if(t==null)return false;if(!t.source.startsWith("navidrome:"))return Library.get(c).favourite(t.id);
-        try{JSONObject a=account(c);if(!t.source.equals("navidrome:"+Library.key(a.getString("url")+":"+a.getString("username"))))return false;String snapshot=prefs(c).getString("starredSongs","[]");if(!snapshot.equals(starredSnapshot)){java.util.Set<String> ids=new java.util.HashSet<>();JSONArray songs=new JSONArray(snapshot);for(int i=0;i<songs.length();i++)ids.add(songs.getJSONObject(i).getString("id"));starredIds=ids;starredSnapshot=snapshot;}return starredIds.contains(Uri.parse(t.uri).getLastPathSegment());}catch(Exception ignored){return false;}
+        try{JSONObject a=account(c);if(!t.source.equals("navidrome:"+Library.key(a.getString("url")+":"+a.getString("username"))))return false;String snapshot=prefs(c).getString("starredSongs","[]");StarredIndex index=starredIndex;if(!snapshot.equals(index.snapshot)){java.util.Set<String> ids=new java.util.HashSet<>();JSONArray songs=new JSONArray(snapshot);for(int i=0;i<songs.length();i++)ids.add(songs.getJSONObject(i).getString("id"));index=new StarredIndex(snapshot,ids);starredIndex=index;}return index.ids.contains(Uri.parse(t.uri).getLastPathSegment());}catch(Exception ignored){return false;}
     }
-    static boolean albumStarred(Context c,String id)throws Exception{JSONArray list=albums(c);for(int i=0;i<list.length();i++)if(id.equals(list.getJSONObject(i).getString("id")))return list.getJSONObject(i).optBoolean("starred");return false;}
-    static boolean toggleAlbum(Context c,String id)throws Exception{boolean star=!albumStarred(c,id);api(account(c),star?"star":"unstar",new JSONObject().put("albumId",id.substring(3)));JSONArray list=albums(c);for(int i=0;i<list.length();i++)if(id.equals(list.getJSONObject(i).getString("id")))list.getJSONObject(i).put("starred",star);synchronized(NetworkSources.class){remoteAlbums=list;}prefs(c).edit().putString("albums",list.toString()).commit();return star;}
-    static boolean toggleSong(Context c,String id)throws Exception{Track t=Library.get(c).track(id);if(t==null)throw new IllegalArgumentException("Song unavailable");if(!t.source.startsWith("navidrome:"))return Library.get(c).toggleFavourite(id);if(item(c,t)==null)throw new IllegalArgumentException("Reconnect this song's Navidrome account");boolean star=!favourite(c,t);String song=Uri.parse(t.uri).getLastPathSegment();api(account(c),star?"star":"unstar",new JSONObject().put("id",song));JSONArray current=cached(c,"starredSongs"),next=new JSONArray();for(int i=0;i<current.length();i++)if(!song.equals(current.getJSONObject(i).getString("id")))next.put(current.getJSONObject(i));if(star){JSONObject added=api(account(c),"getSong",new JSONObject().put("id",song)).getJSONObject("song");next.put(added);}prefs(c).edit().putString("starredSongs",next.toString()).commit();return star;}
+    static boolean albumStarred(Context c,String id)throws Exception{if(remoteAlbums.length()==0)albums(c);JSONArray list=remoteAlbums;for(int i=0;i<list.length();i++)if(id.equals(list.getJSONObject(i).getString("id")))return list.getJSONObject(i).optBoolean("starred");return false;}
+    static boolean toggleAlbum(Context c,String id)throws Exception{boolean star=!albumStarred(c,id);api(account(c),star?"star":"unstar",new JSONObject().put("albumId",id.substring(3)));JSONArray list=albums(c);for(int i=0;i<list.length();i++)if(id.equals(list.getJSONObject(i).getString("id")))list.getJSONObject(i).put("starred",star);synchronized(NetworkSources.class){remoteAlbums=list;prefs(c).edit().putString("albums",list.toString()).putLong("generation",prefs(c).getLong("generation",0)+1).commit();}return star;}
+    static boolean toggleSong(Context c,String id)throws Exception{Track t=Library.get(c).track(id);if(t==null)throw new IllegalArgumentException("Song unavailable");if(!t.source.startsWith("navidrome:"))return Library.get(c).toggleFavourite(id);if(item(c,t)==null)throw new IllegalArgumentException("Reconnect this song's Navidrome account");boolean star=!favourite(c,t);String song=Uri.parse(t.uri).getLastPathSegment();api(account(c),star?"star":"unstar",new JSONObject().put("id",song));JSONArray current=cached(c,"starredSongs"),next=new JSONArray();for(int i=0;i<current.length();i++)if(!song.equals(current.getJSONObject(i).getString("id")))next.put(current.getJSONObject(i));if(star){JSONObject added=api(account(c),"getSong",new JSONObject().put("id",song)).getJSONObject("song");next.put(added);}synchronized(NetworkSources.class){prefs(c).edit().putString("starredSongs",next.toString()).putLong("generation",prefs(c).getLong("generation",0)+1).commit();}return star;}
     private static JSONArray albumPage(JSONObject account,int offset)throws Exception{JSONArray input=api(account,"getAlbumList2",new JSONObject().put("type","alphabeticalByName").put("size",500).put("offset",offset)).optJSONObject("albumList2").optJSONArray("album");JSONArray out=new JSONArray();if(input==null)return out;
         for(int i=0;i<input.length();i++){JSONObject a=input.getJSONObject(i);String id=a.getString("id");out.put(new JSONObject().put("id","nd:"+id).put("title",a.optString("name",a.optString("title"))).put("artist",a.optString("artist")).put("year",a.optString("year")).put("count",a.optInt("songCount")).put("coverId","nd_"+Library.key(id)).put("coverArt",a.optString("coverArt")).put("remote",true));}return out;}
-    static JSONArray tracks(Context c,String mode,String value)throws Exception{
-        JSONObject result;JSONArray songs;
-        if(mode.equals("album")&&value.startsWith("nd:")){result=api(account(c),"getAlbum",new JSONObject().put("id",value.substring(3)));songs=result.getJSONObject("album").optJSONArray("song");}
-        else if(mode.equals("serverPlaylist")){result=api(account(c),"getPlaylist",new JSONObject().put("id",value));songs=result.getJSONObject("playlist").optJSONArray("entry");}
+    static JSONArray tracks(Context c,String mode,String value)throws Exception{return tracks(c,mode,value,()->false);}
+    static JSONArray tracks(Context c,String mode,String value,java.util.function.BooleanSupplier cancelled)throws Exception{
+        JSONObject owner=account(c),result;JSONArray songs;
+        if(mode.equals("album")&&value.startsWith("nd:")){result=cachedApi(c,"getAlbum",new JSONObject().put("id",value.substring(3)));songs=result.getJSONObject("album").optJSONArray("song");}
+        else if(mode.equals("serverPlaylist")){result=cachedApi(c,"getPlaylist",new JSONObject().put("id",value));songs=result.getJSONObject("playlist").optJSONArray("entry");}
         else if(mode.equals("favourites")){ensureSynced(c);return normalizeTracks(c,cached(c,"starredSongs"),"");}
         else if(mode.equals("playlist"))return Library.get(c).tracks(mode,value);
-        else if(mode.equals("artist")){JSONArray matching=new JSONArray(),artists=cached(c,"artists");String artistId="";for(int i=0;i<artists.length();i++)if(value.equals(artists.getJSONObject(i).optString("name"))||value.equals(artists.getJSONObject(i).optString("id"))){artistId=artists.getJSONObject(i).getString("id");break;}if(artistId.isEmpty())return matching;JSONArray artistAlbums=api(account(c),"getArtist",new JSONObject().put("id",artistId)).getJSONObject("artist").optJSONArray("album");if(artistAlbums!=null)for(int i=0;i<artistAlbums.length();i++){JSONArray entries=tracks(c,"album","nd:"+artistAlbums.getJSONObject(i).getString("id"));for(int j=0;j<entries.length();j++)matching.put(entries.getJSONObject(j));}return matching;}
-        else {int offset=0;try{if(mode.equals("all"))offset=Integer.parseInt(value);}catch(Exception ignored){}result=api(account(c),"search3",new JSONObject().put("query",mode.equals("all")?"":value).put("songCount",200).put("songOffset",Math.max(0,offset)).put("albumCount",0).put("artistCount",0));songs=result.getJSONObject("searchResult3").optJSONArray("song");}
-        return normalizeTracks(c,songs,mode.equals("search")?value:"");
+        else if(mode.equals("artist")){JSONArray matching=new JSONArray(),artistAlbums=artistAlbums(c,value);for(int i=0;i<artistAlbums.length();i++){if(cancelled.getAsBoolean())throw new IllegalStateException("Collection changed");JSONArray entries=tracks(c,"album",artistAlbums.getJSONObject(i).getString("id"));for(int j=0;j<entries.length();j++)matching.put(entries.getJSONObject(j));}return matching;}
+        else {int offset=0;try{if(mode.equals("all"))offset=Integer.parseInt(value);}catch(Exception ignored){}result=cachedApi(c,"search3",new JSONObject().put("query",mode.equals("all")?"":value).put("songCount",200).put("songOffset",Math.max(0,offset)).put("albumCount",0).put("artistCount",0));songs=result.getJSONObject("searchResult3").optJSONArray("song");}
+        return normalizeTracks(c,songs,mode.equals("search")?value:"",owner);
     }
-    private static JSONArray normalizeTracks(Context c,JSONArray songs,String prefix)throws Exception{
+    private static JSONArray normalizeTracks(Context c,JSONArray songs,String prefix)throws Exception{return normalizeTracks(c,songs,prefix,account(c));}
+    private static JSONArray normalizeTracks(Context c,JSONArray songs,String prefix,JSONObject owner)throws Exception{
         JSONArray out=new JSONArray();if(songs==null)return out;Library library=Library.get(c);
-        for(int i=0;i<songs.length();i++){JSONObject s=songs.getJSONObject(i);if(!prefix.isEmpty() && !s.optString("title").trim().toLowerCase(java.util.Locale.ROOT).startsWith(prefix.trim().toLowerCase(java.util.Locale.ROOT)))continue;Track t=new Track();String song=s.getString("id");t.id="nd_"+Library.key(account(c).getString("url")+":"+account(c).getString("username")+":"+song);t.source="navidrome:"+Library.key(account(c).getString("url")+":"+account(c).getString("username"));Track legacy=library.track("nd_"+Library.key(account(c).getString("url")+":"+song));if(legacy!=null&&legacy.source.equals(t.source))t.id=legacy.id;t.uri=new Uri.Builder().scheme("navidrome").authority("track").appendPath(song).appendQueryParameter("account",Library.key(account(c).getString("url")+":"+account(c).getString("username"))).appendQueryParameter("cover",s.optString("coverArt")).build().toString();t.albumId="nd:"+s.optString("albumId");t.title=s.optString("title","Untitled");t.artist=s.optString("artist");t.album=s.optString("album");t.year=s.optString("year");t.number=s.optInt("track");t.disc=s.optInt("discNumber");t.duration=s.optLong("duration")*1000;t.mime=s.optString("contentType");library.getWritableDatabase().insertWithOnConflict("tracks",null,t.values(0),android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);out.put(t.json(favourite(c,t)));}return out;
+        android.database.sqlite.SQLiteDatabase db=library.getWritableDatabase();db.beginTransaction();try {
+        for(int i=0;i<songs.length();i++){JSONObject s=songs.getJSONObject(i);if(!prefix.isEmpty() && !s.optString("title").trim().toLowerCase(java.util.Locale.ROOT).startsWith(prefix.trim().toLowerCase(java.util.Locale.ROOT)))continue;Track t=new Track();String song=s.getString("id");t.id="nd_"+Library.key(owner.getString("url")+":"+owner.getString("username")+":"+song);t.source="navidrome:"+Library.key(owner.getString("url")+":"+owner.getString("username"));Track legacy=library.track("nd_"+Library.key(owner.getString("url")+":"+song));if(legacy!=null&&legacy.source.equals(t.source))t.id=legacy.id;t.uri=new Uri.Builder().scheme("navidrome").authority("track").appendPath(song).appendQueryParameter("account",Library.key(owner.getString("url")+":"+owner.getString("username"))).appendQueryParameter("cover",s.optString("coverArt")).build().toString();t.albumId="nd:"+s.optString("albumId");t.title=s.optString("title","Untitled");t.artist=s.optString("artist");t.album=s.optString("album");t.year=s.optString("year");t.number=s.optInt("track");t.disc=s.optInt("discNumber");t.duration=s.optLong("duration")*1000;t.mime=s.optString("contentType");library.getWritableDatabase().insertWithOnConflict("tracks",null,t.values(0),android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE);out.put(t.json(favourite(c,t)));}db.setTransactionSuccessful();return out;}finally{db.endTransaction();}
     }
-    static JSONArray playlists(Context c)throws Exception{JSONArray input=api(account(c),"getPlaylists",new JSONObject()).getJSONObject("playlists").optJSONArray("playlist"),out=new JSONArray();if(input!=null)for(int i=0;i<input.length();i++){JSONObject p=input.getJSONObject(i);out.put(new JSONObject().put("id",p.getString("id")).put("name",p.optString("name")).put("count",p.optInt("songCount")).put("remote",true));}return out;}
+    static JSONArray playlists(Context c)throws Exception{ensureSynced(c);return cached(c,"playlists");}
+    private static JSONArray fetchPlaylists(JSONObject a)throws Exception{JSONArray input=api(a,"getPlaylists",new JSONObject()).getJSONObject("playlists").optJSONArray("playlist"),out=new JSONArray();if(input!=null)for(int i=0;i<input.length();i++){JSONObject p=input.getJSONObject(i);out.put(new JSONObject().put("id",p.getString("id")).put("name",p.optString("name")).put("count",p.optInt("songCount")).put("changed",p.optString("changed")).put("remote",true));}return out;}
     static MediaItem item(Context c,Track t){if(t==null)return null;if(!t.source.startsWith("navidrome:"))return t.mediaItem();try{JSONObject a=account(c);String scope=Library.key(a.getString("url")+":"+a.getString("username"));boolean legacy=t.source.equals("navidrome:"+Library.key(a.getString("url")));if(!legacy&&!t.source.equals("navidrome:"+scope))return null;Uri address=Uri.parse(t.uri);if(legacy)address=address.buildUpon().appendQueryParameter("account",scope).build();return t.mediaItem().buildUpon().setUri(address).build();}catch(Exception e){return null;}}
     static File cover(Context c,String coverId)throws Exception{JSONObject a=account(c);String id="";
         if(coverId.startsWith("nd_")&&Library.get(c).track(coverId)==null){JSONArray list=albums(c);for(int i=0;i<list.length();i++){JSONObject album=list.getJSONObject(i);if(coverId.equals(album.getString("coverId"))){id=album.optString("coverArt");if(id.isEmpty())id=api(a,"getAlbum",new JSONObject().put("id",album.getString("id").substring(3))).getJSONObject("album").optString("coverArt");break;}}}

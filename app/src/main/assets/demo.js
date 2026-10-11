@@ -317,6 +317,9 @@ window.nativeBridge = {
         deliver({ type: "catalog", data: { albums, summary: demoSummary() } });
         emit();
         break;
+      case "artistAlbums":
+        data.albums = albums.filter(a => a.artist === req.value);
+        break;
       case "tracks":
         data.albumStarred = Boolean(
           albums.find((a) => a.id === req.value)?.starred,
@@ -327,7 +330,9 @@ window.nativeBridge = {
               ? true
               : req.mode === "album"
                 ? t.albumId === req.value
-                : req.mode === "favourites"
+                : req.mode === "artist"
+                  ? t.artist === req.value
+                  : req.mode === "favourites"
                   ? favourites.has(t.id)
                   : req.mode === "playlist"
                     ? (

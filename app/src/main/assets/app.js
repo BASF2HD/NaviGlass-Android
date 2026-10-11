@@ -28,7 +28,23 @@ let remoteSource = false,
   drawerValue = "",
   drawerRevision = 0,
   drawerStarred = false;
-let librarySummary = {}, libraryArtists = [];
+let librarySummary = {}, libraryArtists = [], libraryById = new Map(), artistYears = new Map();
+let sourceKey = null, cacheGeneration = 0, playbackBrowseMode = "";
+const responseCache = new Map(), pendingResponses = new Map(), collectionMemory = new Map();
+const groupSettings = { artists: true, playlists: false };
+const collectionPositions = new Map();
+function invalidateCollections() { cacheGeneration++; responseCache.clear(); pendingResponses.clear(); collectionMemory.clear(); }
+function rememberCollection() {
+  if (albums.length) collectionPositions.set(browseMode, albums[albumIndex]?.track?.id || albums[albumIndex]?.id);
+  if (sourceKey) try {
+    localStorage.setItem("naviglass-collection:" + sourceKey, JSON.stringify({ selection, groups: groupSettings, positions: [...collectionPositions], view: ["albums", "songs", "artists", "playlists"].includes(activeView) ? activeView : browseMode }));
+  } catch {}
+}
+function collectionKey(nav) { return JSON.stringify([nav, selection[nav], nav === "songs" ? selection.grouped : groupSettings[nav], sortSettings[nav], nav === "songs" ? songOffset : 0]); }
+function cachedResponse(action, data) {
+  const item = responseCache.get(JSON.stringify([action, data]));
+  return item && Date.now() - item.time < 300000 ? item.value : null;
+}
 const selection = { albums: "all", songs: "all", grouped: false, artists: "", playlists: "", more: "" };
 function menuCount(name) {
   if (name === "albums") return selection.albums === "favourite" ? libraryAlbums.filter(a => a.starred).length : libraryAlbums.length;
@@ -89,6 +105,7 @@ function sortOptions(body, mode, onChange) {
   ]) {
     const option = menuItem(section, title, detail, () => {
       sortSettings[mode] = value;
+      collectionMemory.delete(mode);
       try {
         localStorage.setItem(
           "naviglass-browse-sort",
@@ -143,14 +160,36 @@ function toast(text) {
   toastTimer = setTimeout(() => ($("toast").hidden = true), 5000);
 }
 async function call(action, data = {}) {
-  try {
-    const result = await request(action, data);
-    if (result?.summary) { librarySummary = result.summary; updateMenuCount(); }
-    return result;
-  } catch (e) {
-    toast(e.message);
-    return null;
+  const cacheable = ["tracks", "artistAlbums", "playlists", "radioStations", "radioSaved"].includes(action);
+  const key = JSON.stringify([action, data]), generation = cacheGeneration;
+  if (cacheable) {
+    const saved = cachedResponse(action, data);
+    if (saved) return saved;
+    if (pendingResponses.has(key)) return pendingResponses.get(key);
   }
+  const operation = (async () => {
+    try {
+      const result = await request(action, data);
+      if (generation !== cacheGeneration) return null;
+      if (["favourite", "albumFavourite", "addPlaylist", "createPlaylist", "radioSave"].includes(action)) invalidateCollections();
+      if (result?.summary) { librarySummary = result.summary; updateMenuCount(); }
+      if (cacheable && result) {
+        const value = { ...result }; delete value.summary;
+        responseCache.set(key, { time: Date.now(), value });
+        // Bound retained song lists, independently of library size.
+        let total = [...responseCache.values()].reduce((n,r) => n + (r.value.tracks?.length || 0), 0);
+        while (responseCache.size > 64 || total > 20000) {
+          const oldest = responseCache.keys().next().value;
+          total -= responseCache.get(oldest).value.tracks?.length || 0;
+          responseCache.delete(oldest);
+        }
+      }
+      return result;
+    } catch (e) { if (generation === cacheGeneration && e.message !== "Collection changed") toast(e.message); return null; }
+  })();
+  if (cacheable) pendingResponses.set(key, operation);
+  try { return await operation; }
+  finally { if (pendingResponses.get(key) === operation) pendingResponses.delete(key); }
 }
 // Consume outside drawer taps instead of passing them to Cover Flow beneath it.
 const drawerBackdrop = document.createElement("button");
@@ -282,6 +321,7 @@ function selectAlbum(index, animate = true) {
   const nextIndex = Math.max(0, Math.min(albums.length - 1, index));
   if (animate && nextIndex === albumIndex) return;
   albumIndex = nextIndex;
+  rememberCollection();
   $("browseStrip").value = albumIndex;
   animate ? flow.navigateTo(albumIndex) : flow.jumpTo(albumIndex);
   caption();
@@ -382,43 +422,44 @@ window.addEventListener("resize", () =>
 );
 listen("catalog", (data) => {
   document.body.classList.remove("libraryLoading");
-  const previous = albums[albumIndex]?.id;
+  rememberCollection();
+  const nextSource = data.source || (data.remote ? "remote" : "local"), sameSource = sourceKey === nextSource;
+  sourceKey = nextSource;
+  invalidateCollections();
   libraryAlbums = data.albums || [];
+  libraryById = new Map(libraryAlbums.map(a => [a.id, a]));
+  artistYears = new Map();
+  for (const a of libraryAlbums) artistYears.set(a.artist, Math.max(artistYears.get(a.artist) || 0, Number(a.year) || 0));
   librarySummary = data.summary || {}; libraryArtists = data.artists || [];
-  selection.albums = "all"; selection.songs = "all"; selection.grouped = false; selection.artists = ""; selection.playlists = ""; selection.more = "";
-  albums = sortedEntries(libraryAlbums, "albums");
-  browseTracks = [];
-  browseMode = "albums";
-  collectionRevision++;
   remoteSource = Boolean(data.remote);
-  $("browseStrip").max = Math.max(0, albums.length - 1);
-  $("browseStrip").disabled = !albums.length;
-  loaded.clear();
-  textureEpoch++;
-  flow.setAlbumData(albums.map(() => flow.getDefaultTexture()));
-  $("welcome").hidden = albums.length > 0 || activeView !== "albums";
-  if (!albums.length) {
+  if (!sameSource) {
+    Object.assign(selection, { albums: "all", songs: "all", grouped: false, artists: "", playlists: "", more: "" });
+    groupSettings.artists = true; groupSettings.playlists = false;
+    collectionPositions.clear(); activeView = "albums"; songOffset = 0;
+    try {
+      const saved = JSON.parse(localStorage.getItem("naviglass-collection:" + sourceKey) || "null");
+      if (saved) {
+        if (["all", "favourite"].includes(saved.selection?.albums)) selection.albums = saved.selection.albums;
+        if (["all", "favourites"].includes(saved.selection?.songs)) selection.songs = saved.selection.songs;
+        selection.grouped = Boolean(saved.selection?.grouped);
+        for (const nav of ["artists", "playlists"]) {
+          selection[nav] = typeof saved.selection?.[nav] === "string" ? saved.selection[nav] : "";
+          if (typeof saved.groups?.[nav] === "boolean") groupSettings[nav] = saved.groups[nav];
+        }
+        for (const [mode, key] of saved.positions || []) if (typeof key === "string") collectionPositions.set(mode, key);
+        if (["albums", "songs", "artists", "playlists"].includes(saved.view)) activeView = saved.view;
+      }
+    } catch {}
+    albums = []; browseTracks = []; browseMode = activeView;
+    closeBrowseMenu();
+  }
+  if (!libraryAlbums.length) {
     $("welcome").querySelector("h2").textContent = data.remembered ? "Your saved library" : "Meet your music again.";
     $("welcome").querySelector("p").textContent = data.remembered ? "No albums are currently available. Refresh your source in Settings; your saved location is retained." : "Load local music or connect your Navidrome library once to get started.";
     $("device").hidden = $("folder").hidden = $("connectWelcome").hidden = Boolean(data.remembered);
   }
-  $("songs").disabled = !albums.length;
-  $("caption").hidden = !albums.length;
-  $("backAlbum").disabled = !albums.length;
-  $("nextAlbum").disabled = !albums.length;
-  $("play").disabled = !state.track && !albums.length;
-  if (albums.length)
-    selectAlbum(
-      Math.max(
-        0,
-        albums.findIndex((a) => a.id === previous),
-      ),
-      false,
-    );
-  else $("albumPosition").textContent = "";
-  closeBrowseMenu();
-  activeView = "albums";
-  markView("albums");
+  activateCollection(["albums", "songs", "artists", "playlists"].includes(activeView) ? activeView : browseMode, { keepMenu: sameSource && !$("content").hidden });
+  updateMenuCount();
 });
 listen("error", (_, error) => toast(error || "Operation failed"));
 listen("progress", (data, error) => {
@@ -475,6 +516,7 @@ function scheduleReturnToPlaying() {
   clearTimeout(snapBackTimer);
   if (
     !state.playing ||
+    (playbackBrowseMode && playbackBrowseMode !== browseMode) ||
     !state.track ||
     $("panel").open ||
     !$("content").hidden ||
@@ -586,7 +628,7 @@ listen("state", (data) => {
   });
   if (data.error && data.error !== lastError) toast(data.error);
   lastError = data.error || "";
-  if (t && t.id !== lastTrack) {
+  if (t && t.id !== lastTrack && (!playbackBrowseMode || playbackBrowseMode === browseMode)) {
     lastTrack = t.id;
     const index = albums.findIndex((album) =>
       album.track
@@ -854,6 +896,7 @@ $("drawerFavourite").onclick = async () => {
 };
 async function playTrack(index, list = tracks) {
   if (!list[index]) return;
+  playbackBrowseMode = browseMode;
   if (albums[albumIndex]?.groupTracks) { const id = list[index].id; list = browseTracks; index = list.findIndex(t => t.id === id); if (index < 0) return; }
   const albumIds =
     list.every((t) => t.albumId === list[index].albumId) &&
@@ -1422,55 +1465,84 @@ function positionBrowse() {
   p.style.bottom = Math.max(8, innerHeight - r.top + 8) + "px";
   p.style.maxHeight = Math.max(100, r.top - 16) + "px";
 }
-function setCollection(entries, mode, queue = []) {
-  albums = entries;
-  browseTracks = queue;
-  browseMode = mode;
-  albumIndex = 0;
-  loaded.clear();
-  textureEpoch++;
+function setCollection(entries, mode, queue = [], options = {}) {
+  rememberCollection();
+  const position = collectionPositions.get(mode);
+  albums = entries; browseTracks = queue; browseMode = mode;
+  albumIndex = Math.max(0, entries.findIndex(e => (e.track?.id || e.id) === position));
+  loaded.clear(); textureEpoch++;
   flow.setAlbumData(albums.map(() => flow.getDefaultTexture()));
   $("browseStrip").max = Math.max(0, albums.length - 1);
   $("browseStrip").disabled = !albums.length;
   $("scene").hidden = false;
   $("caption").hidden = !albums.length;
-  $("songs").disabled = !albums.length;
-  $("backAlbum").disabled = !albums.length;
-  $("nextAlbum").disabled = !albums.length;
+  for (const id of ["songs", "backAlbum", "nextAlbum"]) $(id).disabled = !albums.length;
   $("welcome").hidden = Boolean(libraryAlbums.length || albums.length);
-  if (albums.length) selectAlbum(0, false);
-  else toast("No items in this collection yet.");
+  if (albums.length) selectAlbum(albumIndex, false);
+  else if (!options.loading) toast("No items in this collection yet.");
+  $("albumPosition").textContent = albums.length ? albumIndex + 1 + " / " + albums.length : "";
   markView(mode === "favourites" ? "songs" : mode);
-  closeBrowseMenu();
+  if (!options.keepMenu) closeBrowseMenu();
 }
-async function browseSongs(mode = "all", value = "0", nav = "songs") {
-  const rev = ++collectionRevision;
-  if (nav === "songs" && mode === "all" && selection.grouped) { setCollection(sortedEntries(libraryAlbums, "songs"), "songs"); return; }
-  toast("Loading songs…");
+async function browseSongs(mode = "all", value = "0", nav = "songs", options = {}) {
+  if (native) call("browseCancel");
+  if (mode === "artist") pendingResponses.delete(JSON.stringify(["tracks", { mode, value }]));
+  const rev = ++collectionRevision, key = collectionKey(nav), remembered = collectionMemory.get(nav);
+  if (remembered?.key === key && Date.now() - remembered.time < 300000) {
+    setCollection(remembered.entries, nav, remembered.queue, options); return;
+  }
+  const grouped = nav === "songs" ? selection.grouped : groupSettings[nav];
+  if (grouped && (mode === "all" || mode === "artist")) {
+    let list = libraryAlbums;
+    if (mode === "artist") {
+      setCollection([], nav, [], { ...options, loading: true });
+      const data = await call("artistAlbums", { value });
+      if (!data || rev !== collectionRevision) return;
+      list = data.albums;
+    }
+    const entries = sortedEntries(list, nav);
+    collectionMemory.set(nav, { key, entries, queue: [], time: Date.now() });
+    setCollection(entries, nav, [], options); return;
+  }
+  // Change the active view immediately, even on the first uncached request.
+  setCollection([], nav, [], { ...options, loading: true });
   const data = await call("tracks", { mode, value });
   if (!data || rev !== collectionRevision) return;
-  const entries = data.tracks.map((t) => {
-    const a = libraryAlbums.find((a) => a.id === t.albumId);
-    return {
-      ...a,
-      id: t.albumId,
-      title: t.title,
-      artist: t.artist,
-      year: t.year || a?.year,
-      coverId: a?.coverId || t.id,
-      track: t,
-    };
+  const entries = data.tracks.map(t => {
+    const a = libraryById.get(t.albumId);
+    return { ...a, id: t.albumId, title: t.title, artist: t.artist, year: t.year || a?.year, coverId: a?.coverId || t.id, track: t };
   });
-  $("toast").hidden = true;
-  clearTimeout(toastTimer);
-  const ordered = sortedEntries(entries, nav);
-  if (nav === "songs" && selection.grouped) {
+  let ordered = sortedEntries(entries, nav), queue;
+  if (grouped) {
     const groups = new Map();
-    for (const e of ordered) { if (!groups.has(e.id)) groups.set(e.id, { ...libraryAlbums.find(a => a.id === e.id), id: e.id, title: e.track.album, artist: e.artist, year: e.year, coverId: e.coverId, groupTracks: [] }); groups.get(e.id).groupTracks.push(e.track); }
-    for (const group of groups.values()) group.groupTracks.sort((a,b) => (Number(a.disc)||0)-(Number(b.disc)||0) || (Number(a.number)||0)-(Number(b.number)||0) || a.title.localeCompare(b.title));
-    const grouped = sortedEntries([...groups.values()], "songs");
-    setCollection(grouped, nav, grouped.flatMap(e => e.groupTracks));
-  } else setCollection(ordered, nav, ordered.map((e) => e.track));
+    for (const e of ordered) {
+      if (!groups.has(e.id)) groups.set(e.id, { ...libraryById.get(e.id), id: e.id, title: e.track.album, artist: e.artist, year: e.year, coverId: e.coverId, groupTracks: [] });
+      groups.get(e.id).groupTracks.push(e.track);
+    }
+    for (const g of groups.values()) g.groupTracks.sort((a,b) => (Number(a.disc)||0)-(Number(b.disc)||0) || (Number(a.number)||0)-(Number(b.number)||0) || a.title.localeCompare(b.title));
+    ordered = sortedEntries([...groups.values()], nav); queue = ordered.flatMap(e => e.groupTracks);
+  } else queue = ordered.map(e => e.track);
+  collectionMemory.set(nav, { key, entries: ordered, queue, time: Date.now() });
+  setCollection(ordered, nav, queue, options);
+}
+async function activateCollection(name, options = {}) {
+  rememberCollection();
+  if (name === "albums") {
+    collectionRevision++;
+    setCollection(sortedEntries(selection.albums === "favourite" ? libraryAlbums.filter(a => a.starred) : libraryAlbums, "albums"), "albums", [], options);
+  } else if (name === "songs") await browseSongs(selection.songs, selection.songs === "all" ? String(songOffset) : "", name, options);
+  else if (name === "artists") {
+    selection.artists ||= libraryArtists[0]?.name || libraryAlbums[0]?.artist || "";
+    await browseSongs("artist", selection.artists, name, options);
+  } else if (name === "playlists") {
+    const rev = ++collectionRevision;
+    if (!cachedResponse("playlists", {})) setCollection([], name, [], { ...options, loading: true });
+    const data = await call("playlists"); if (!data || rev !== collectionRevision) return;
+    const list = data.playlists.find(p => (p.remote ? "remote:" : "local:") + p.id === selection.playlists) || data.playlists[0];
+    if (!list) { setCollection([], name, [], options); return; }
+    selection.playlists = (list.remote ? "remote:" : "local:") + list.id;
+    await browseSongs(list.remote ? "serverPlaylist" : "playlist", list.id, name, options);
+  }
 }
 function markSelected(button, selected) {
   button.setAttribute("aria-pressed", String(selected));
@@ -1488,6 +1560,7 @@ async function switchView(name) {
     return;
   }
   if ($("panel").open) window.closePanel();
+  if (native) call("browseCancel");
   activeView = name;
   menuAnchor = ["radio", "radioSaved", "favourites"].includes(name)
     ? "more"
@@ -1518,6 +1591,8 @@ async function switchView(name) {
     return switchView(name);
   }
   if (epoch !== viewEpoch) return;
+  if (["albums", "songs", "artists", "playlists"].includes(name)) activateCollection(name, { keepMenu: true });
+  else { collectionRevision++; markView(menuAnchor); }
   if (name === "albums") {
     menuItem(body, "All Albums", "Browse your full library", () => {
       collectionRevision++; selection.albums = "all";
@@ -1541,6 +1616,7 @@ async function switchView(name) {
     sortOptions(body, "songs");
     menuItem(body, "Search songs", "Find the beginning of a song title", search);
   } else if (name === "artists") {
+    menuItem(body, "Group by album", "", () => { groupSettings.artists = !groupSettings.artists; return activateCollection("artists"); }, groupSettings.artists);
     const artists = libraryArtists.length ? libraryArtists.map(a => a.name) : [...new Set(libraryAlbums.map(a => a.artist).filter(Boolean))];
     const input = document.createElement("input");
     input.type = "search";
@@ -1551,15 +1627,7 @@ async function switchView(name) {
     body.append(rows);
     const draw = () => {
       rows.replaceChildren();
-      const artistEntries = artists.map((title) => ({
-        title,
-        year: Math.max(
-          0,
-          ...libraryAlbums
-            .filter((a) => a.artist === title)
-            .map((a) => Number(a.year) || 0),
-        ),
-      }));
+      const artistEntries = artists.map(title => ({ title, year: artistYears.get(title) || 0 }));
       const visible = sortedEntries(artistEntries, "artists").map(a => a.title).filter(a => a.toLowerCase().includes(input.value.toLowerCase()));
       updateMenuCount(visible.length);
       for (const artist of visible) menuItem(rows, artist, "", () => { selection.artists = artist; return browseSongs("artist", artist, "artists"); }, selection.artists === artist);
@@ -1568,6 +1636,7 @@ async function switchView(name) {
     input.oninput = draw;
     draw();
   } else if (name === "playlists") {
+    menuItem(body, "Group by album", "", () => { groupSettings.playlists = !groupSettings.playlists; return activateCollection("playlists"); }, groupSettings.playlists);
     menuItem(body, "New playlist", "Create a mix on this device", () =>
       newPlaylist(),
     );
@@ -1581,6 +1650,13 @@ async function switchView(name) {
       menuItem(body, p.name, "", () => { selection.playlists = (p.remote ? "remote:" : "local:") + p.id; return browseSongs(p.remote ? "serverPlaylist" : "playlist", p.id, "playlists"); }, selection.playlists === (p.remote ? "remote:" : "local:") + p.id);
   } else if (name === "more") {
     const stations = await call("radioStations"); if (epoch !== viewEpoch) return; starterCount = stations?.stations.length || 0; updateMenuCount();
+    if (selection.more === "favourites") browseSongs("favourites", "", "songs", { keepMenu: true });
+    else {
+      const saved = selection.more === "saved" ? await call("radioSaved") : null;
+      if (epoch !== viewEpoch) return;
+      setStationCollection(saved?.stations || stations?.stations || [], 0, { keepMenu: true });
+      markView("more");
+    }
     menuItem(body, "Internet radio browser", "", () => { selection.more = "browser"; return switchView("radio"); }, selection.more === "browser");
     menuItem(
       body,
@@ -1645,7 +1721,7 @@ function openStationMenu(anchor, station, onSaved) {
 function stationCover(station) {
   return "/radio-art/" + encodeURIComponent(station.id) + ".jpg";
 }
-function setStationCollection(stations, index = 0) {
+function setStationCollection(stations, index = 0, options = {}) {
   setCollection(
     stations.map((s) => ({
       id: s.id,
@@ -1656,10 +1732,12 @@ function setStationCollection(stations, index = 0) {
       demoCover: stationCover(s),
     })),
     "more",
+    [], options,
   );
   selectAlbum(index);
 }
 async function playCurrentEntry() {
+  playbackBrowseMode = browseMode;
   const e = albums[albumIndex];
   if (!e) return;
   if (e.station)
