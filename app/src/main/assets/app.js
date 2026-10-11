@@ -262,7 +262,9 @@ async function loadWindow(index) {
 }
 function selectAlbum(index, animate = true) {
   if (!albums.length) return;
-  albumIndex = Math.max(0, Math.min(albums.length - 1, index));
+  const nextIndex = Math.max(0, Math.min(albums.length - 1, index));
+  if (animate && nextIndex === albumIndex) return;
+  albumIndex = nextIndex;
   $("browseStrip").value = albumIndex;
   animate ? flow.navigateTo(albumIndex) : flow.jumpTo(albumIndex);
   caption();
@@ -1201,7 +1203,9 @@ window.addEventListener("keydown", (e) => {
   }
 });
 let wheelTotal = 0,
-  wheelReset;
+  wheelReset,
+  wheelFrame = 0,
+  wheelTarget = 0;
 scene.addEventListener(
   "wheel",
   (e) => {
@@ -1224,7 +1228,11 @@ scene.addEventListener(
     const steps =
       wheelTotal > 0 ? Math.floor(wheelTotal) : Math.ceil(wheelTotal);
     if (steps) {
-      selectAlbum(albumIndex + steps);
+      wheelTarget = Math.max(0, Math.min(albums.length - 1, (wheelFrame ? wheelTarget : albumIndex) + steps));
+      if (!wheelFrame) wheelFrame = requestAnimationFrame(() => {
+        wheelFrame = 0;
+        if (!document.hidden && !$("panel").open) selectAlbum(wheelTarget);
+      });
       wheelTotal -= steps;
     }
     clearTimeout(wheelReset);

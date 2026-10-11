@@ -563,12 +563,13 @@ function _tweenTo(target, props, duration) {
     });
 }
 
-function _tick() {
+function _tick(now) {
     frameId = 0;
     if (document.hidden) return;
+    animationEngine.advance(now);
     _renderScene();
     _updateCoverBounds();
-    if (performance.now() < renderUntil) frameId = requestAnimationFrame(_tick);
+    if (animationEngine.active || performance.now() < renderUntil) frameId = requestAnimationFrame(_tick);
 }
 
 function _renderScene() {
