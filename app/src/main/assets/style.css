@@ -1729,3 +1729,17 @@ body.immersive .primaryTransport .play {
   .volumeSliderShell { height: 100px; }
   .volumeSliderShell input[type="range"] { width: 100px; }
 }
+
+/* Outside drawer taps have one purpose: dismiss, without activating the cover. */
+.drawerBackdrop {
+  position: fixed; inset: 0; z-index: 20; width: 100%; height: 100%;
+  margin: 0; padding: 0; border: 0; border-radius: 0;
+  background: transparent; touch-action: none;
+}
+.drawerBackdrop:hover { background: transparent; }
+@media (orientation: landscape) and (max-height: 600px) {
+  .coverBrowse button { height: 14px; min-height: 14px; }
+  #backAlbum::before { border-top-width: 4px; border-bottom-width: 4px; border-right-width: 7px; }
+  #nextAlbum::before { border-top-width: 4px; border-bottom-width: 4px; border-left-width: 7px; }
+  .primaryTransport button:not(.play) img { width: var(--play-icon, 18px); height: var(--play-icon, 18px); }
+}

@@ -1,6 +1,18 @@
 # Validation
 
-## Current 0.2.4 public test release — 11 October 2026
+## Current 0.2.5 Android test build — 11 October 2026
+
+NaviGlass-Mobile hosts Android now; iOS is planned next, not built. Generic HTTPS-only APK, versionCode 8, unchanged application ID and debug signer. No private endpoint or account is preloaded.
+
+- assembleDebug, lintDebug (no errors), nine JVM tests and assembleDebugAndroidTest pass.
+- Three isolated emulator suites pass: PlaybackReviewIntegrationTest, LayoutIntegrationTest and ServerIntegrationTest, 20.152 seconds on the final rebuilt APK. The latter two now check strict title-prefix search including unrelated remote candidates, actual native speaker taps twice, outside drawer dismissal without cover click-through, 14px landscape end caps, and landscape Full View → portrait restoration including the native immersive flag. Existing playback/modes/volume and synthetic HTTPS/raw-stream/encrypted-login checks remain.
+- Sandbox-isolated Mac Electron checks use real mouse input, not only DOM click calls: speaker toggles, outside drawer/context dismissal, A–Z prefix-only results, R/no-match/artist-only/substring queries, landscape arrow heights and Full View rotation pass without console errors.
+- Broader browser playback/keyboard/automatic album-boundary/repeat/shuffle/idle-return/playing-marker tests also pass for 0.2.5. Sorting/persistence/radio/artwork/metadata/short-landscape checks pass after one retry for live broadcaster artwork. This is not a broadcaster-availability guarantee.
+- Refreshed published screenshots contain only synthetic albums. Historical 0.2.4 matched-source comparisons are retained below, not claimed as newly rerun in full.
+- Navidrome prefix search filters the first 200 server candidates; it may miss later matching titles in very large search result sets. Physical phones, personal-account login, battery/Bluetooth and manufacturer Recent Apps handling remain unverified.
+
+
+## Historical 0.2.4 public test release — 11 October 2026
 
 Generic HTTPS-only APK, versionCode 7, app label NaviGlass and unchanged application ID/debug signer. No credentials/private endpoint are preloaded. Public release and repository visibility were explicitly approved.
 

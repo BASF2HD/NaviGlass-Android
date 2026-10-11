@@ -333,9 +333,8 @@ window.nativeBridge = {
                     ? (
                         playlists.find((p) => p.id === req.value)?.tracks || []
                       ).includes(t.id)
-                    : (t.title + " " + t.album + " " + t.artist)
-                        .toLowerCase()
-                        .includes(req.value.toLowerCase()),
+                    : t.title.trimStart().toLocaleLowerCase()
+                        .startsWith(req.value.trim().toLocaleLowerCase()),
           )
           .map((t) => ({ ...t, favourite: favourites.has(t.id) }));
         if (req.mode === "all")

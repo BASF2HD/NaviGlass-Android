@@ -21,8 +21,8 @@ android {
         applicationId 'com.naviglass.android'
         minSdk 29
         targetSdk 36
-        versionCode 7
-        versionName '0.2.4'
+        versionCode 8
+        versionName '0.2.5'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         buildConfigField 'String', 'NAVIDROME_HTTP_HOST', '"' + approvedHttpHost + '"'
         buildConfigField 'int', 'NAVIDROME_HTTP_PORT', approvedHttpPort.toString()

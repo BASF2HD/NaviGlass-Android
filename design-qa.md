@@ -1,4 +1,12 @@
-# Design QA — NaviGlass 0.2.4
+# Design QA — NaviGlass 0.2.5
+
+Scoped interaction regression: passed.
+
+Actual Mac mouse clicks and native Android MotionEvents verify the second speaker tap closes its popover and outside drawer taps dismiss without click-through. Portrait rotation leaves Full View and restores menus; native landscape status-bar handling remains covered by the emulator suite. Landscape browse end caps are 14px high to match the track, and previous/next SVGs are proportional rather than vertically squashed. Strict song-title prefix search excludes artist/album/substring matches and shows an explicit no-match state. Published player/drawer/actions/volume/full-view/search screenshots were refreshed with synthetic artwork. No console errors occurred.
+
+Build/lint, nine JVM tests and three focused emulator suites pass. Broader Mac playback/keyboard/sorting/radio/metadata/compact-layout checks also pass; a live broadcaster artwork timeout passed on retry. This is scoped bug-regression review, not complete original-player fidelity or physical-device certification. Full original-source comparisons below describe the prior review, not a fresh ten-state comparison for this build.
+
+## Historical 0.2.4 visual comparison
 
 final result: passed
 

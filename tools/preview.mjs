@@ -110,7 +110,7 @@ const server = http.createServer(async (req, res) => {
     );
     if (name === "/__preview") {
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ mode: "UI review", version: "0.2.4", nativeLogin: false }));
+      res.end(JSON.stringify({ mode: "UI review", version: "0.2.5", nativeLogin: false }));
       return;
     }
     if (name.startsWith("/radio-art/")) {
@@ -157,7 +157,7 @@ const server = http.createServer(async (req, res) => {
 });
 server.listen(8769, "127.0.0.1", () =>
   console.log(
-    "NaviGlass UI review: http://127.0.0.1:8769/?v=0.2.4 — local UI review; Navidrome login is native-only",
+    "NaviGlass UI review: http://127.0.0.1:8769/?v=0.2.5 — local UI review; Navidrome login is native-only",
   ),
 );
 process.on("SIGTERM", () => server.close());

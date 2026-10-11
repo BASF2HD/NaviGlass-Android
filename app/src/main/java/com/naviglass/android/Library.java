@@ -68,8 +68,8 @@ final class Library extends SQLiteOpenHelper {
         else if(mode.equals("artist")){query+="WHERE t.artist=? AND t.source NOT LIKE 'navidrome:%' ORDER BY t.album,t.disc,t.number";args=new String[]{value};}
         else if(mode.equals("favourites")) {query+="WHERE f.track_id IS NOT NULL ORDER BY t.album COLLATE NOCASE,t.disc,t.number";args=new String[0];}
         else if(mode.equals("playlist")) {query+="JOIN playlist_tracks p ON p.track_id=t.id WHERE p.playlist_id=? ORDER BY p.position";args=new String[]{value};}
-        else {query+="WHERE t.source NOT LIKE 'navidrome:%' AND (t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\' OR t.album LIKE ? ESCAPE '\\' ) ORDER BY CASE WHEN t.title LIKE ? ESCAPE '\\' THEN 0 WHEN t.title LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,t.title COLLATE NOCASE,t.album,t.number LIMIT 200";
-            String term="%"+value.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";args=new String[]{term,term,term,term.substring(1),term};}
+        else {query+="WHERE t.source NOT LIKE 'navidrome:%' AND LTRIM(t.title) LIKE ? ESCAPE '\\' ORDER BY t.title COLLATE NOCASE,t.album,t.number LIMIT 200";
+            String term=value.trim().replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";args=new String[]{term};}
         JSONArray result=new JSONArray();
         try(Cursor c=getReadableDatabase().rawQuery(query,args)) {while(c.moveToNext())result.put(Track.read(c).json(Track.value(c,"fav")!=0));}
         return result;

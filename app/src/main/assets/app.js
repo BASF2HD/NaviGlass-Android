@@ -135,6 +135,16 @@ async function call(action, data = {}) {
     return null;
   }
 }
+// Consume outside drawer taps instead of passing them to Cover Flow beneath it.
+const drawerBackdrop = document.createElement("button");
+drawerBackdrop.type = "button";
+drawerBackdrop.className = "drawerBackdrop";
+drawerBackdrop.setAttribute("aria-label", "Close song drawer");
+drawerBackdrop.tabIndex = -1;
+drawerBackdrop.hidden = true;
+document.body.append(drawerBackdrop);
+drawerBackdrop.onclick = () => { closeSongMenu(); window.closePanel(); };
+$("panel").addEventListener("close", () => { drawerBackdrop.hidden = !($("panel").open && $("panel").classList.contains("songDrawer")); });
 function openPanel(title, mode) {
   closeSongMenu();
   closeBrowseMenu();
@@ -155,6 +165,7 @@ function openPanel(title, mode) {
   $("drawerCount").textContent = "…";
   if (songDrawer) {
     $("panel").show();
+    drawerBackdrop.hidden = false;
     positionDrawer();
     if (!matchMedia("(prefers-reduced-motion: reduce)").matches)
       $("panel").animate(
@@ -171,6 +182,7 @@ function openPanel(title, mode) {
         { duration: 220, easing: "cubic-bezier(.2,.7,.2,1)" },
       );
   } else {
+    drawerBackdrop.hidden = true;
     $("panel").removeAttribute("style");
     $("panel").showModal();
   }
@@ -185,6 +197,7 @@ window.closePanel = () => {
     return false;
   }
   $("panel").close();
+  drawerBackdrop.hidden = true;
   panelMode = "";
   drawerRevision++;
   scheduleReturnToPlaying();
@@ -195,7 +208,7 @@ $("close").onclick = () => {
   window.closePanel();
 };
 $("panel").addEventListener("click", (event) => {
-  if (event.target === $("panel")) window.closePanel();
+  if (event.target === $("panel") && !$("panel").classList.contains("songDrawer")) window.closePanel();
 });
 $("panel").addEventListener("cancel", () => {
   panelMode = "";
@@ -943,13 +956,13 @@ function search() {
   const revision = ++drawerRevision;
   const input = document.createElement("input");
   input.type = "search";
-  input.placeholder = "Song, artist or album";
+  input.placeholder = "Song title starts with…";
   input.setAttribute("aria-label", "Search music");
   const results = document.createElement("div"),
     status = document.createElement("p");
   status.className = "hint";
   status.setAttribute("role", "status");
-  status.textContent = "Type a song, artist or album name.";
+  status.textContent = "Type the beginning of a song title.";
   $("panelBody").append(input, status, results);
   let queryRevision = 0;
   input.oninput = () => {
@@ -959,7 +972,7 @@ function search() {
     results.replaceChildren();
     status.textContent = term
       ? "Searching…"
-      : "Type a song, artist or album name.";
+      : "Type the beginning of a song title.";
     if (!term) {
       tracks = [];
       return;
@@ -975,19 +988,11 @@ function search() {
         return;
       const needle = term.toLocaleLowerCase();
       tracks = data.tracks.filter((t) =>
-        [t.title, t.artist, t.album]
-          .join(" ")
-          .toLocaleLowerCase()
-          .includes(needle),
+        String(t.title || "").trimStart().toLocaleLowerCase().startsWith(needle),
       );
-      const relevance = (track) => {
-        const title = (track.title || "").toLocaleLowerCase();
-        return title.startsWith(needle) ? 0 : title.includes(needle) ? 1 : 2;
-      };
-      tracks.sort((a, b) => relevance(a) - relevance(b) ||
-        (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base", numeric: true }));
+      tracks.sort((a, b) => (a.title || "").localeCompare(b.title || "", undefined, { sensitivity: "base", numeric: true }));
       status.textContent = tracks.length
-        ? tracks.length + " matching songs · song titles first; artist/album matches follow"
+        ? tracks.length + " matching songs"
         : "No matching songs.";
       if (tracks.length) drawTracks(results, tracks);
     }, 220);
@@ -1004,7 +1009,7 @@ document.addEventListener("pointerdown", (event) => {
   if (
     $("panel").open &&
     $("panel").classList.contains("songDrawer") &&
-    !event.target.closest("#panel, #songs, .songContext")
+    !event.target.closest("#panel, #songs, .songContext, .drawerBackdrop")
   )
     window.closePanel();
 });
@@ -1484,7 +1489,7 @@ async function switchView(name) {
         browseSongs("all", String(songOffset));
       });
     sortOptions(body, "songs");
-    menuItem(body, "Search songs", "Find a song, artist or album", search);
+    menuItem(body, "Search songs", "Find the beginning of a song title", search);
   } else if (name === "artists") {
     const artists = [
       ...new Set(libraryAlbums.map((a) => a.artist).filter(Boolean)),
@@ -1667,6 +1672,7 @@ $("connectWelcome").onclick = connectServer;
 // A light-dismiss popover anchored to the speaker, never a modal panel.
 const volumePopover = document.createElement("div");
 volumePopover.className = "volumePopover";
+volumePopover.id = "volumePopover";
 volumePopover.setAttribute("popover", "auto");
 volumePopover.setAttribute("role", "dialog");
 volumePopover.setAttribute("aria-label", "Player volume");
@@ -1681,6 +1687,8 @@ volumeSlider.setAttribute("aria-label", "Player volume");
 volumeShell.append(volumeSlider);
 volumePopover.append(volumeShell);
 document.body.append(volumePopover);
+$("volume").setAttribute("popovertarget", "volumePopover");
+$("volume").setAttribute("popovertargetaction", "toggle");
 $("volume").setAttribute("aria-haspopup", "dialog");
 $("volume").setAttribute("aria-expanded", "false");
 function positionVolumePopover() {
@@ -1696,30 +1704,38 @@ volumeSlider.oninput = () => {
 };
 volumePopover.addEventListener("toggle", () => {
   $("volume").setAttribute("aria-expanded", String(volumePopover.matches(":popover-open")));
+  positionVolumePopover();
 });
 $("volume").onclick = () => {
-  if (volumePopover.matches(":popover-open")) { volumePopover.hidePopover(); return; }
+  // Native popover toggle knows its invoker, so pointer-down cannot close/reopen it.
   volumeSlider.value = Math.round((state.volume ?? 1) * 100);
   volumeSlider.style.setProperty("--volume-progress", volumeSlider.value + "%");
-  volumePopover.showPopover();
-  positionVolumePopover();
 };
+volumePopover.addEventListener("beforetoggle", (event) => {
+  if (event.newState === "open") queueMicrotask(positionVolumePopover);
+});
 window.addEventListener("resize", positionVolumePopover);
 updateModeButtons();
 let immersive = false;
-$("fullscreen").onclick = () => {
-  immersive = !immersive;
+function setImmersive(enabled) {
+  immersive = Boolean(enabled && innerWidth > innerHeight);
   closeSongMenu();
   closeBrowseMenu();
+  volumePopover.hidePopover();
   document.body.classList.toggle("immersive", immersive);
   caption();
   if (native) call("immersive", { enabled: immersive });
   else if (immersive)
-    document.documentElement
-      .requestFullscreen?.()
-      .catch(() => toast("Fullscreen is unavailable"));
-  else if (document.fullscreenElement) document.exitFullscreen();
-};
+    document.documentElement.requestFullscreen?.().catch(() => toast("Fullscreen is unavailable"));
+  else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+window.naviglassExitFullView = () => { if (immersive) setImmersive(false); };
+function restorePortraitMode() {
+  if (innerHeight >= innerWidth) window.naviglassExitFullView();
+}
+$("fullscreen").onclick = () => setImmersive(!immersive);
+window.addEventListener("resize", restorePortraitMode);
+matchMedia("(orientation: portrait)").addEventListener("change", restorePortraitMode);
 document.addEventListener("fullscreenchange", () => {
   if (!native && !document.fullscreenElement) {
     immersive = false;
