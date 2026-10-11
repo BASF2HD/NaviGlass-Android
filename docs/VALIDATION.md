@@ -1,3 +1,9 @@
+# Current mobile/Navidrome refresh — 0.2.5
+
+VersionName 0.2.5, versionCode 8, package and existing development certificate are retained. Compact dropdowns, visible ticks, numeric headers, complete remote metadata and format negotiation are included. Build/lint and nine JVM checks pass. Four native checks across server, playback and layout suites pass; focused final server checks also pass after legacy playlist migration and grouped-favourite transitions were added. The synthetic server validates 501 albums, 301 favourite songs across two albums, artists, playlists and radio lists. Native M4A/AAC, WAV and FLAC decoder buffers progress with selected audio, positive volume and no error in negotiated and legacy fallback modes. Seeking, background playback and next-favourite-album transition pass. The previous release certificate matches the rebuilt APK certificate. Honor-phone acoustic output is not certified.
+
+See [codebase findings and limits](NAVIDROME-REVIEW.md). Earlier validation entries below are historical and describe the build at their recorded stage.
+
 # Validation
 
 ## Refreshed 0.2.5 release — 11 October 2026

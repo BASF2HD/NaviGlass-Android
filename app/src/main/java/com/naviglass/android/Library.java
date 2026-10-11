@@ -66,7 +66,7 @@ final class Library extends SQLiteOpenHelper {
         if(mode.equals("album")) {query+="WHERE t.album_id=? ORDER BY t.disc,t.number,t.title COLLATE NOCASE";args=new String[]{value};}
         else if(mode.equals("all")) {int offset;try{offset=Integer.parseInt(value);}catch(Exception e){offset=0;}offset=Math.max(0,Math.min(1000000,offset));query+="WHERE t.source NOT LIKE 'navidrome:%' ORDER BY t.title COLLATE NOCASE,t.artist,t.album LIMIT 200 OFFSET ?";args=new String[]{String.valueOf(offset)};}
         else if(mode.equals("artist")){query+="WHERE t.artist=? AND t.source NOT LIKE 'navidrome:%' ORDER BY t.album,t.disc,t.number";args=new String[]{value};}
-        else if(mode.equals("favourites")) {query+="WHERE f.track_id IS NOT NULL ORDER BY t.album COLLATE NOCASE,t.disc,t.number";args=new String[0];}
+        else if(mode.equals("favourites")) {query+="WHERE f.track_id IS NOT NULL AND t.source NOT LIKE 'navidrome:%' ORDER BY t.album COLLATE NOCASE,t.disc,t.number";args=new String[0];}
         else if(mode.equals("playlist")) {query+="JOIN playlist_tracks p ON p.track_id=t.id WHERE p.playlist_id=? ORDER BY p.position";args=new String[]{value};}
         else {query+="WHERE t.source NOT LIKE 'navidrome:%' AND LTRIM(t.title) LIKE ? ESCAPE '\\' ORDER BY t.title COLLATE NOCASE,t.album,t.number LIMIT 200";
             String term=value.trim().replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";args=new String[]{term};}

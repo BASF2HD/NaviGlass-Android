@@ -28,6 +28,21 @@ let remoteSource = false,
   drawerValue = "",
   drawerRevision = 0,
   drawerStarred = false;
+let librarySummary = {}, libraryArtists = [];
+const selection = { albums: "all", songs: "all", grouped: false, artists: "", playlists: "", more: "" };
+function menuCount(name) {
+  if (name === "albums") return selection.albums === "favourite" ? libraryAlbums.filter(a => a.starred).length : libraryAlbums.length;
+  if (name === "songs") return selection.songs === "favourites" ? librarySummary.favouriteSongs ?? browseTracks.filter(t => t.favourite).length : librarySummary.songs ?? libraryAlbums.reduce((n,a) => n + Number(a.count || 0),0);
+  if (name === "artists") return librarySummary.artists ?? new Set(libraryAlbums.map(a => a.artist).filter(Boolean)).size;
+  if (name === "playlists") return librarySummary.playlists ?? 0;
+  if (name === "more") return selection.more === "starter" ? starterCount : librarySummary.radios ?? 0;
+  return null;
+}
+let starterCount = 0;
+function updateMenuCount(count = menuCount(activeView)) {
+  const value = $("content").querySelector(".menuCount");
+  if (value && count != null) value.textContent = Number(count).toLocaleString();
+}
 async function ensureDemo() {
   if (!native) {
     demoReady ||= import("./demo.js").then(() => call("ready"));
@@ -86,7 +101,7 @@ function sortOptions(body, mode, onChange) {
         setCollection(
           entries,
           mode,
-          entries.map((e) => e.track).filter(Boolean),
+          entries.flatMap(e => e.groupTracks || (e.track ? [e.track] : [])),
         );
         selectAlbum(
           Math.max(
@@ -99,13 +114,13 @@ function sortOptions(body, mode, onChange) {
         section
           .querySelectorAll("button")
           .forEach((b) =>
-            b.setAttribute("aria-pressed", String(b.dataset.sort === value)),
+            markSelected(b, b.dataset.sort === value),
           );
       }
       onChange?.();
     });
     option.dataset.sort = value;
-    option.setAttribute("aria-pressed", String(sortSettings[mode] === value));
+    markSelected(option, sortSettings[mode] === value);
   }
   body.append(section);
 }
@@ -129,7 +144,9 @@ function toast(text) {
 }
 async function call(action, data = {}) {
   try {
-    return await request(action, data);
+    const result = await request(action, data);
+    if (result?.summary) { librarySummary = result.summary; updateMenuCount(); }
+    return result;
   } catch (e) {
     toast(e.message);
     return null;
@@ -367,6 +384,8 @@ listen("catalog", (data) => {
   document.body.classList.remove("libraryLoading");
   const previous = albums[albumIndex]?.id;
   libraryAlbums = data.albums || [];
+  librarySummary = data.summary || {}; libraryArtists = data.artists || [];
+  selection.albums = "all"; selection.songs = "all"; selection.grouped = false; selection.artists = ""; selection.playlists = "";
   albums = sortedEntries(libraryAlbums, "albums");
   browseTracks = [];
   browseMode = "albums";
@@ -592,6 +611,9 @@ async function showTracks(
   if (arguments.length === 0 && entry?.station) {
     playCurrentEntry();
     return;
+  }
+  if (arguments.length === 0 && entry?.groupTracks) {
+    openPanel(entry.title, "favourites"); tracks = entry.groupTracks; drawerSelection = -1; drawerValue = ""; drawerRevision++; $("drawerCount").textContent = tracks.length + " songs"; drawTracks(); return;
   }
   if (arguments.length === 0 && entry?.track) {
     openPanel(entry.track.album || "Songs", "favourites");
@@ -832,9 +854,10 @@ $("drawerFavourite").onclick = async () => {
 };
 async function playTrack(index, list = tracks) {
   if (!list[index]) return;
+  if (albums[albumIndex]?.groupTracks) { const id = list[index].id; list = browseTracks; index = list.findIndex(t => t.id === id); if (index < 0) return; }
   const albumIds =
     list.every((t) => t.albumId === list[index].albumId) &&
-    albums.every((a) => !a.track && !a.station)
+    albums.every((a) => !a.track && !a.station && !a.groupTracks)
       ? albums.map((a) => a.id)
       : [];
   const result = await call("play", {
@@ -1302,18 +1325,23 @@ window.naviglassDebug = {
   },
   render: flow.debugRenderState,
 };
-function heading(title, hint) {
+function heading(title, hint, count = menuCount(activeView)) {
   const body = $("content");
   body.replaceChildren();
   const h = document.createElement("h1"),
     p = document.createElement("p");
   h.textContent = title;
+  if (count != null) {
+    const separator = document.createElement("span"), total = document.createElement("span");
+    separator.className = "menuSeparator"; separator.textContent = "|"; separator.setAttribute("aria-hidden", "true");
+    total.className = "menuCount"; total.textContent = Number(count).toLocaleString(); total.setAttribute("aria-label", "Total items"); h.append(separator, total);
+  }
   p.className = "hint";
   p.textContent = hint;
   const close = button("", closeBrowseMenu, "browseClose");
   icon(close, "close");
   close.setAttribute("aria-label", "Close music browser");
-  body.append(h, p, close);
+  body.append(h); if (hint) body.append(p); body.append(close);
   return body;
 }
 function closeBrowseMenu() {
@@ -1417,6 +1445,7 @@ function setCollection(entries, mode, queue = []) {
 }
 async function browseSongs(mode = "all", value = "0", nav = "songs") {
   const rev = ++collectionRevision;
+  if (nav === "songs" && mode === "all" && selection.grouped) { setCollection(sortedEntries(libraryAlbums, "songs"), "songs"); return; }
   toast("Loading songs…");
   const data = await call("tracks", { mode, value });
   if (!data || rev !== collectionRevision) return;
@@ -1432,28 +1461,26 @@ async function browseSongs(mode = "all", value = "0", nav = "songs") {
       track: t,
     };
   });
-  if (!entries.length) {
-    toast("No songs in this collection yet.");
-    return;
-  }
   $("toast").hidden = true;
   clearTimeout(toastTimer);
   const ordered = sortedEntries(entries, nav);
-  setCollection(
-    ordered,
-    nav,
-    ordered.map((e) => e.track),
-  );
+  if (nav === "songs" && selection.grouped) {
+    const groups = new Map();
+    for (const e of ordered) { if (!groups.has(e.id)) groups.set(e.id, { ...libraryAlbums.find(a => a.id === e.id), id: e.id, title: e.track.album, artist: e.artist, year: e.year, coverId: e.coverId, groupTracks: [] }); groups.get(e.id).groupTracks.push(e.track); }
+    for (const group of groups.values()) group.groupTracks.sort((a,b) => (Number(a.disc)||0)-(Number(b.disc)||0) || (Number(a.number)||0)-(Number(b.number)||0) || a.title.localeCompare(b.title));
+    const grouped = sortedEntries([...groups.values()], "songs");
+    setCollection(grouped, nav, grouped.flatMap(e => e.groupTracks));
+  } else setCollection(ordered, nav, ordered.map((e) => e.track));
 }
-function menuItem(body, title, detail, action) {
-  const b = button("", action, "browseItem"),
-    label = document.createElement("strong"),
-    meta = document.createElement("small");
-  label.textContent = title;
-  meta.textContent = detail || "";
-  b.append(label, meta);
-  body.append(b);
-  return b;
+function markSelected(button, selected) {
+  button.setAttribute("aria-pressed", String(selected));
+  let tick = button.querySelector(".selectionTick");
+  if (!tick) { tick = document.createElement("span"); tick.className = "selectionTick"; tick.textContent = "✓"; tick.setAttribute("aria-hidden", "true"); button.append(tick); }
+  tick.hidden = !selected;
+}
+function menuItem(body, title, detail, action, selected) {
+  const b = button("", action, "browseItem"), label = document.createElement("strong");
+  label.textContent = title; b.append(label); if (selected !== undefined) markSelected(b, selected); body.append(b); return b;
 }
 async function switchView(name) {
   if (!$("content").hidden && activeView === name) {
@@ -1493,24 +1520,19 @@ async function switchView(name) {
   if (epoch !== viewEpoch) return;
   if (name === "albums") {
     menuItem(body, "All Albums", "Browse your full library", () => {
-      collectionRevision++;
+      collectionRevision++; selection.albums = "all";
       setCollection(sortedEntries(libraryAlbums,"albums"), "albums");
-    });
+    }, selection.albums === "all");
     menuItem(body, "Favourite", "Browse starred albums", () => {
       collectionRevision++;
-      const list = libraryAlbums.filter((a) => a.starred);
-      if (list.length) setCollection(sortedEntries(list, "albums"), "albums");
-      else toast("No favourite albums yet.");
-    });
+      selection.albums = "favourite"; const list = libraryAlbums.filter((a) => a.starred);
+      setCollection(sortedEntries(list, "albums"), "albums");
+    }, selection.albums === "favourite");
     sortOptions(body, "albums");
   } else if (name === "songs") {
-    menuItem(body, "All Songs", "One cover per song", () => browseSongs());
-    menuItem(body, "Group by album", "One cover per album", () =>
-      setCollection(sortedEntries(libraryAlbums, "songs"), "songs"),
-    );
-    menuItem(body, "Favourite", "Browse starred songs", () =>
-      browseSongs("favourites", "", "songs"),
-    );
+    menuItem(body, "All Songs", "", () => { selection.songs = "all"; songOffset = 0; return browseSongs(); }, selection.songs === "all");
+    menuItem(body, "Group by album", "", () => { selection.grouped = !selection.grouped; return browseSongs(selection.songs, selection.songs === "all" ? "0" : ""); }, selection.grouped);
+    menuItem(body, "Favourite", "", () => { selection.songs = "favourites"; return browseSongs("favourites", "", "songs"); }, selection.songs === "favourites");
     if (browseTracks.length === 200)
       menuItem(body, "Next 200 songs", "Load the next page", () => {
         songOffset += 200;
@@ -1519,9 +1541,7 @@ async function switchView(name) {
     sortOptions(body, "songs");
     menuItem(body, "Search songs", "Find the beginning of a song title", search);
   } else if (name === "artists") {
-    const artists = [
-      ...new Set(libraryAlbums.map((a) => a.artist).filter(Boolean)),
-    ].sort((a, b) => a.localeCompare(b));
+    const artists = libraryArtists.length ? libraryArtists.map(a => a.name) : [...new Set(libraryAlbums.map(a => a.artist).filter(Boolean))];
     const input = document.createElement("input");
     input.type = "search";
     input.placeholder = "Find artist";
@@ -1540,12 +1560,9 @@ async function switchView(name) {
             .map((a) => Number(a.year) || 0),
         ),
       }));
-      for (const artist of sortedEntries(artistEntries, "artists")
-        .map((a) => a.title)
-        .filter((a) => a.toLowerCase().includes(input.value.toLowerCase())))
-        menuItem(rows, artist, "Browse artist songs", () =>
-          browseSongs("artist", artist, "artists"),
-        );
+      const visible = sortedEntries(artistEntries, "artists").map(a => a.title).filter(a => a.toLowerCase().includes(input.value.toLowerCase()));
+      updateMenuCount(visible.length);
+      for (const artist of visible) menuItem(rows, artist, "", () => { selection.artists = artist; return browseSongs("artist", artist, "artists"); }, selection.artists === artist);
     };
     sortOptions(body, "artists", draw);
     input.oninput = draw;
@@ -1556,33 +1573,25 @@ async function switchView(name) {
     );
     const data = await call("playlists");
     if (epoch !== viewEpoch || !data) return;
+    updateMenuCount(data.playlists.length);
     sortOptions(body, "playlists");
     for (const p of [...data.playlists].sort((a, b) =>
       a.name.localeCompare(b.name),
     ))
-      menuItem(body, p.name, p.count + " songs", () =>
-        browseSongs(
-          p.remote ? "serverPlaylist" : "playlist",
-          p.id,
-          "playlists",
-        ),
-      );
+      menuItem(body, p.name, "", () => { selection.playlists = (p.remote ? "remote:" : "local:") + p.id; return browseSongs(p.remote ? "serverPlaylist" : "playlist", p.id, "playlists"); }, selection.playlists === (p.remote ? "remote:" : "local:") + p.id);
   } else if (name === "more") {
-    menuItem(body, "Internet radio browser", "Search community stations", () =>
-      switchView("radio"),
-    );
+    const stations = await call("radioStations"); if (epoch !== viewEpoch) return; starterCount = stations?.stations.length || 0; updateMenuCount();
+    menuItem(body, "Internet radio browser", "", () => { selection.more = "browser"; return switchView("radio"); }, selection.more === "browser");
     menuItem(
       body,
       "Starter stations",
       "Browse live radio in Cover Flow",
       async () => {
         const d = await call("radioStations");
-        if (d) setStationCollection(d.stations);
-      },
+        if (d) { selection.more = "starter"; setStationCollection(d.stations); }
+      }, selection.more === "starter",
     );
-    menuItem(body, "Saved stations", "Your saved radio stations", () =>
-      switchView("radioSaved"),
-    );
+    menuItem(body, "Saved stations", "", () => { selection.more = "saved"; return switchView("radioSaved"); }, selection.more === "saved");
     menuItem(body, "Favourite songs", "Browse starred songs", () =>
       browseSongs("favourites", "", "songs"),
     );
@@ -1622,6 +1631,7 @@ function openStationMenu(anchor, station, onSaved) {
       showSongInfo({ ...station, radio: true });
     }),
   );
+  if (station.remote) songMenu.firstElementChild.remove();
   songMenu
     .querySelectorAll("button")
     .forEach((b) => b.setAttribute("role", "menuitem"));
@@ -1659,6 +1669,7 @@ async function playCurrentEntry() {
       station: e.station.id,
       ids: albums.filter((a) => a.station).map((a) => a.station.id),
     });
+  if (e.groupTracks) return playTrack(0, e.groupTracks);
   if (e.track)
     return playTrack(
       browseTracks.findIndex((t) => t.id === e.track.id),
@@ -1800,8 +1811,8 @@ async function settingsPage(epoch) {
   if (data?.connected) {
     actions.append(
       button("Use Navidrome", () => call("serverUse")),
-      button("Load more server albums", async () => {
-        toast("Loading the next 500 albums…");
+      button("Refresh Navidrome library", async () => {
+        toast("Refreshing Navidrome albums, favourites and stations…");
         await call("serverMore");
       }),
       button("Disconnect and forget login", () => call("serverDisconnect")),
@@ -1821,7 +1832,7 @@ async function settingsPage(epoch) {
   const hint = document.createElement("p");
   hint.className = "hint";
   hint.textContent =
-    "Use your public HTTPS Navidrome address; a publicly accessible server does not require Tailscale. Android logins are encrypted with Keystore. Favourites, new playlists and saved radio stations stay on this device. This browser preview is for UI review and does not use server credentials.";
+    "Use your public HTTPS Navidrome address; a publicly accessible server does not require Tailscale. Android logins are encrypted with Keystore. Navidrome favourites sync with your server. Server playlists and saved stations are imported; new playlists and directory-station saves stay on this device. This browser preview is for UI review and does not use server credentials.";
   body.append(hint);
 }
 function connectServer() {
@@ -1881,7 +1892,7 @@ function connectServer() {
       window.closePanel();
       switchView("albums");
       toast(
-        "Connected to Navidrome. First 500 albums loaded; load more in Settings.",
+        "Connected to Navidrome. Your albums, favourites, playlists and stations are available.",
       );
     } catch (e) {
       error.textContent = e.message;
@@ -1896,12 +1907,7 @@ function connectServer() {
 async function radioBrowser(epoch, savedOnly = false) {
   const data = await call(savedOnly ? "radioSaved" : "radioStations");
   if (epoch !== viewEpoch || !data) return;
-  const body = heading(
-    savedOnly ? "Saved stations" : "Internet radio",
-    savedOnly
-      ? "Saved on this device. Live audio uses network data."
-      : "Search internet radio stations. Live audio uses network data.",
-  );
+  const body = heading(savedOnly ? "Saved stations" : "Internet radio", "", data.stations.length);
   const filters = document.createElement("form");
   filters.className = "radioFilters";
   const fields = {};
@@ -1925,6 +1931,8 @@ async function radioBrowser(epoch, savedOnly = false) {
     list = data.stations;
   function draw(stations) {
     list = stations;
+    if (!body.querySelector(".menuCount")) { const h = body.querySelector("h1"); const sep = document.createElement("span"), total = document.createElement("span"); sep.className = "menuSeparator"; sep.textContent = "|"; total.className = "menuCount"; h.append(sep,total); }
+    updateMenuCount(stations.length);
     rows.replaceChildren();
     for (const s of stations) {
       const row = document.createElement("div"),
@@ -1935,7 +1943,7 @@ async function radioBrowser(epoch, savedOnly = false) {
       row.dataset.id = s.id;
       title.textContent = s.title;
       detail.textContent = [s.genre, s.provider].filter(Boolean).join(" · ");
-      label.append(title, detail);
+      label.append(title);
       const active = state.track?.id === s.id,
         playing = state.playing || state.buffering;
       row.classList.toggle("active", active);
@@ -1968,6 +1976,7 @@ async function radioBrowser(epoch, savedOnly = false) {
         save.setAttribute("aria-pressed", String(s.saved));
         if (savedOnly && !s.saved) switchView("radioSaved");
       });
+      if (s.remote) { save.disabled = true; save.title = "Saved in Navidrome"; }
       save.setAttribute("aria-label", "Save " + s.title);
       save.setAttribute("aria-pressed", String(Boolean(s.saved)));
       const more = button(

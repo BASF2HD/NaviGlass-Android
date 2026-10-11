@@ -1745,3 +1745,12 @@ body.immersive .primaryTransport .play {
 }
 
 .libraryLoading #welcome button, .libraryLoading #welcome small { display: none; }
+
+/* Compact browser rows retain Android touch target size. */
+#content .browseItem { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+#content .browseItem strong { text-align: left; }
+.selectionTick { color: var(--accent, #86b8ff); font-size: 17px; flex: 0 0 18px; }
+.selectionTick[hidden] { display: none; }
+#content h1 { display: flex; align-items: center; gap: 8px; }
+.menuSeparator { opacity: .45; font-weight: 400; }
+.menuCount { font-variant-numeric: tabular-nums; font-weight: 400; }

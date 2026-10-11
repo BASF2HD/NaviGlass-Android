@@ -29,9 +29,10 @@ public final class PlaybackService extends MediaSessionService {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
     private final Runnable checkpoint=new Runnable(){public void run(){save();handler.postDelayed(this,5000);}};
+    @androidx.annotation.OptIn(markerClass=androidx.media3.common.util.UnstableApi.class)
     @Override public void onCreate() {
         super.onCreate();prefs=getSharedPreferences("playback",MODE_PRIVATE);
-        player=new ExoPlayer.Builder(this).setAudioAttributes(new AudioAttributes.Builder()
+        player=new ExoPlayer.Builder(this).setMediaSourceFactory(new androidx.media3.exoplayer.source.DefaultMediaSourceFactory(new androidx.media3.datasource.ResolvingDataSource.Factory(new androidx.media3.datasource.DefaultDataSource.Factory(this),spec->NavidromeAudio.resolve(this,spec)))).setAudioAttributes(new AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(),true)
             .setHandleAudioBecomingNoisy(true).setWakeMode(C.WAKE_MODE_LOCAL).build();
         session=new MediaSession.Builder(this,player).setSessionActivity(PendingIntent.getActivity(this,0,

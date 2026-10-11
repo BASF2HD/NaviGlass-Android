@@ -314,7 +314,7 @@ window.nativeBridge = {
     }
     switch (req.action) {
       case "ready":
-        deliver({ type: "catalog", data: { albums } });
+        deliver({ type: "catalog", data: { albums, summary: demoSummary() } });
         emit();
         break;
       case "tracks":
@@ -464,6 +464,7 @@ window.nativeBridge = {
             "Design preview only. Source selection works inside the Android app.",
         });
     }
+    data.summary = demoSummary();
     queueMicrotask(() => deliver({ type: "response", id: req.id, data }));
   },
 };
@@ -474,3 +475,5 @@ setInterval(() => {
     else emit();
   }
 }, 500);
+
+function demoSummary() { return { albums: albums.length, favouriteAlbums: albums.filter(a => a.starred).length, songs: all.length, favouriteSongs: favourites.size, artists: new Set(albums.map(a => a.artist)).size, playlists: playlists.length, radios: savedRadio.size }; }
