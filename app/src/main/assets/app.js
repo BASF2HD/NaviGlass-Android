@@ -35,10 +35,10 @@ function menuCount(name) {
   if (name === "songs") return selection.songs === "favourites" ? librarySummary.favouriteSongs ?? browseTracks.filter(t => t.favourite).length : librarySummary.songs ?? libraryAlbums.reduce((n,a) => n + Number(a.count || 0),0);
   if (name === "artists") return librarySummary.artists ?? new Set(libraryAlbums.map(a => a.artist).filter(Boolean)).size;
   if (name === "playlists") return librarySummary.playlists ?? 0;
-  if (name === "more") return selection.more === "starter" ? starterCount : librarySummary.radios ?? 0;
+  if (name === "more") return selection.more === "favourites" ? librarySummary.favouriteSongs ?? 0 : selection.more === "browser" ? radioResultCount : selection.more === "starter" ? starterCount : librarySummary.radios ?? 0;
   return null;
 }
-let starterCount = 0;
+let starterCount = 0, radioResultCount = 0;
 function updateMenuCount(count = menuCount(activeView)) {
   const value = $("content").querySelector(".menuCount");
   if (value && count != null) value.textContent = Number(count).toLocaleString();
@@ -385,7 +385,7 @@ listen("catalog", (data) => {
   const previous = albums[albumIndex]?.id;
   libraryAlbums = data.albums || [];
   librarySummary = data.summary || {}; libraryArtists = data.artists || [];
-  selection.albums = "all"; selection.songs = "all"; selection.grouped = false; selection.artists = ""; selection.playlists = "";
+  selection.albums = "all"; selection.songs = "all"; selection.grouped = false; selection.artists = ""; selection.playlists = ""; selection.more = "";
   albums = sortedEntries(libraryAlbums, "albums");
   browseTracks = [];
   browseMode = "albums";
@@ -1530,7 +1530,7 @@ async function switchView(name) {
     }, selection.albums === "favourite");
     sortOptions(body, "albums");
   } else if (name === "songs") {
-    menuItem(body, "All Songs", "", () => { selection.songs = "all"; songOffset = 0; return browseSongs(); }, selection.songs === "all");
+    menuItem(body, "All Songs", "", () => { selection.songs = "all"; if (selection.more === "favourites") selection.more = ""; songOffset = 0; return browseSongs(); }, selection.songs === "all");
     menuItem(body, "Group by album", "", () => { selection.grouped = !selection.grouped; return browseSongs(selection.songs, selection.songs === "all" ? "0" : ""); }, selection.grouped);
     menuItem(body, "Favourite", "", () => { selection.songs = "favourites"; return browseSongs("favourites", "", "songs"); }, selection.songs === "favourites");
     if (browseTracks.length === 200)
@@ -1592,9 +1592,7 @@ async function switchView(name) {
       }, selection.more === "starter",
     );
     menuItem(body, "Saved stations", "", () => { selection.more = "saved"; return switchView("radioSaved"); }, selection.more === "saved");
-    menuItem(body, "Favourite songs", "Browse starred songs", () =>
-      browseSongs("favourites", "", "songs"),
-    );
+    menuItem(body, "Favourite songs", "", () => { selection.more = "favourites"; selection.songs = "favourites"; return browseSongs("favourites", "", "songs"); }, selection.more === "favourites");
     menuItem(body, "Album library", "Choose local music folders", library);
   } else if (name === "radio") await radioBrowser(epoch);
   else if (name === "radioSaved") await radioBrowser(epoch, true);
@@ -1931,6 +1929,7 @@ async function radioBrowser(epoch, savedOnly = false) {
     list = data.stations;
   function draw(stations) {
     list = stations;
+    if (!savedOnly) radioResultCount = stations.length;
     if (!body.querySelector(".menuCount")) { const h = body.querySelector("h1"); const sep = document.createElement("span"), total = document.createElement("span"); sep.className = "menuSeparator"; sep.textContent = "|"; total.className = "menuCount"; h.append(sep,total); }
     updateMenuCount(stations.length);
     rows.replaceChildren();

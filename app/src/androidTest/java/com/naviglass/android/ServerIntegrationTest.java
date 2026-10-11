@@ -66,6 +66,7 @@ public class ServerIntegrationTest {
             clickMenu(activity,"artists");awaitJs(activity,"document.querySelector('#content .menuCount')?.textContent==='2'");
             clickMenu(activity,"playlists");awaitJs(activity,"document.querySelector('#content .menuCount')?.textContent==='2'");
             clickMenu(activity,"more");awaitJs(activity,"document.querySelector('#content .menuCount')?.textContent==='2'");
+            clickRow(activity,"Favourite songs");clickMenu(activity,"more");awaitJs(activity,"document.querySelector('#content .menuCount')?.textContent==='301'");assertEquals("true",js(activity,"[...document.querySelectorAll('#content .browseItem')].find(b=>b.querySelector('strong')?.textContent==='Favourite songs').getAttribute('aria-pressed')==='true'"));clickMenu(activity,"songs");awaitJs(activity,"document.querySelector('#content .menuCount')?.textContent==='301'");clickMenu(activity,"more");
             final com.google.common.util.concurrent.ListenableFuture<MediaController>[] future=new com.google.common.util.concurrent.ListenableFuture[1];main(()->future[0]=new MediaController.Builder(context,new SessionToken(context,new android.content.ComponentName(context,PlaybackService.class))).buildAsync());
             MediaController controller=future[0].get(15,TimeUnit.SECONDS);
             try{
