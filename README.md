@@ -1,12 +1,14 @@
 # NaviGlass — Mobile
 
+**[Visit the NaviGlass Mobile website](https://basf2hd.github.io/NaviGlass-Mobile/)**
+
 A dedicated Android music player with NaviGlass's black Cover Flow, reflections, top seek bar and bottom playback/browse controls. Local music works without an account; Navidrome and internet radio are optional.
 
-This is a public early-testing project, not a production or Play Store release. The app name is **NaviGlass**; Android identifies the current platform, not the product name. This mobile repository hosts the Android APK; iOS is planned next. Development stays separate from the original NaviGlassPlayer and PiTunes apps.
+This is a public early release, distributed directly from GitHub rather than Google Play. The app name is **NaviGlass**; Android identifies the current platform, not the product name. This mobile repository hosts the Android APK; iOS is planned next. Development stays separate from the original NaviGlassPlayer and PiTunes apps.
 
-**Download: [Android 0.2.5 test APK](https://github.com/BASF2HD/NaviGlass-Mobile/releases/download/v0.2.5/NaviGlass-Android-0.2.5-test.apk)** · **[Latest release and checksum](https://github.com/BASF2HD/NaviGlass-Mobile/releases/latest)**. Android 10+ is required.
+**Download: [Android 0.2.5 APK](https://github.com/BASF2HD/NaviGlass-Mobile/releases/download/v0.2.5/NaviGlass-Android-0.2.5.apk)** · **[Latest release and checksum](https://github.com/BASF2HD/NaviGlass-Mobile/releases/latest)**. Android 10+ is required.
 
-**Current status: 0.2.5 Android test build.** Song search now matches only titles starting with your query. Clicking the speaker a second time closes volume; outside drawer taps dismiss without reaching the covers behind it. Landscape browse arrows match the shorter track, and rotating Full View into portrait restores normal mode. Build/lint, nine JVM tests, three emulator suites and real Mac mouse-click checks pass. Package ID and debug signer are unchanged. This remains an early-testing build, not physical-phone or production certification.
+**Current status: refreshed 0.2.5 Android release (same version).** Repeated portrait cover taps open the song drawer correctly. Startup restores indexed music before showing any source picker, and remembers a configured library even if it is temporarily empty. Explicit song/album selection now replaces the queue directly on the native player, resetting the previous decoder/audio sink. MP3-to-WAV selection and the active native audio stream pass emulator checks, but the reported handset-only silence still needs a listening check on the affected phone. Song search now matches only titles starting with your query. Clicking the speaker a second time closes volume; outside drawer taps dismiss without reaching the covers behind it. Landscape browse arrows match the shorter track, and rotating Full View into portrait restores normal mode. Build/lint, nine JVM tests, three emulator suites and real Mac mouse-click checks pass. Package ID and debug signer are unchanged. This remains an early release, not physical-phone or production certification.
 
 <img src="docs/screenshots/portrait.png" alt="Portrait player with synthetic albums" width="300">
 
@@ -56,7 +58,7 @@ The first 500 albums are loaded alphabetically. **Load next 500 albums** in Sett
 
 Streams request **format=raw**: the app does not request Navidrome transcoding or re-encode songs. Device audio output/Bluetooth may still resample; this is not bit-perfect certification. Availability depends on server connectivity and decoder support. **A publicly accessible HTTPS server does not require Tailscale.** Only a direct private/tailnet route needs access to that network.
 
-HTTPS is the default. The published test APK is HTTPS-only and contains no private server address or preloaded account. A source build can optionally enable one explicitly approved Tailscale IPv4 HTTP host, with the exact port enforced in native validation; no broad HTTP switch is provided. No private endpoint is committed.
+HTTPS is the default. The published APK is HTTPS-only and contains no private server address or preloaded account. A source build can optionally enable one explicitly approved Tailscale IPv4 HTTP host, with the exact port enforced in native validation; no broad HTTP switch is provided. No private endpoint is committed.
 
 ### Internet radio
 
@@ -66,18 +68,18 @@ Stations show provider artwork where available, with a music-icon fallback. Save
 
 Play/pause and previous/next work for radio queues. Live streams cannot be sought and do not support song shuffle/repeat/favourites. Streaming and searches use internet data. The directory and broadcasters receive your network address and may log requests; no account is required.
 
-## Install the 0.2.5 test APK
+## Install NaviGlass 0.2.5
 
-Download the APK and optional SHA-256 checksum from the [0.2.5 GitHub test release](https://github.com/BASF2HD/NaviGlass-Mobile/releases/tag/v0.2.5).
+Download the APK and optional SHA-256 checksum from the [0.2.5 GitHub release](https://github.com/BASF2HD/NaviGlass-Mobile/releases/tag/v0.2.5).
 
-1. Transfer **NaviGlass-Android-0.2.5-test.apk** from the GitHub release to your phone. It updates the earlier test APK without uninstalling.
-2. Open it and permit installation from that source if Android asks. It is debug-signed and intended for testing, not production distribution.
+1. Transfer **NaviGlass-Android-0.2.5.apk** from the GitHub release to your phone. It updates the earlier APK without uninstalling.
+2. Open it and permit installation from that source if Android asks. It is development-signed; device compatibility and production distribution remain under development.
 3. Choose local device music/folder, or connect Navidrome in Settings. Credentials must be entered on the device; none are preloaded.
 4. Swipe covers or use the browse slider. Open an album drawer and select a song.
 5. Rotate the phone, use seeking, then lock it to check background playback and notification controls.
 6. Check radio under More. Allow notification permission if requested.
 
-Indexed local metadata is available on reopening. Expired/moved folder permissions require choosing the folder again. The APK contains no architecture-specific native libraries and can run on ARM and x86 Android devices.
+On reopening, NaviGlass restores indexed local metadata without a new scan or repeated first-run source picker. A short “Opening your library” message may appear during restoration. Expired/moved folder permissions require choosing the folder again. The APK contains no architecture-specific native libraries and can run on ARM and x86 Android devices.
 
 ## Privacy and limits
 
@@ -113,7 +115,11 @@ Current verification: APK build/lint and nine JVM unit tests pass; PlaybackRevie
 
 See [original-player parity analysis](docs/ORIGINAL-PARITY.md), [design comparison](design-qa.md) and [third-party notices](THIRD-PARTY-NOTICES.md). The source is public for inspection, but no open-source licence has yet been granted for the project's own code. Third-party components retain their own licences.
 
-## Platforms and tester feedback
+## Website
+
+The [mobile website](https://basf2hd.github.io/NaviGlass-Mobile/) provides portrait/landscape screenshots, feature and source details, Android download links, installation guidance and an honest iOS availability section. It is a buildless static site in `site/`, deployed by the pinned GitHub Pages workflow. All images are synthetic-library screenshots; the site has no analytics, external fonts or remote scripts.
+
+## Platforms and feedback
 
 The [main NaviGlassPlayer project](https://github.com/BASF2HD/NaviGlassPlayer) is the shared download/discovery hub. Android source and APK versions stay in this NaviGlass-Mobile repository; the APK cannot run on iOS. An iOS adaptation is next after Android review, not built or available yet. Local iOS builds require full Xcode; installable builds also need Apple signing. Apple beta distribution will need TestFlight or another supported Apple distribution route.
 

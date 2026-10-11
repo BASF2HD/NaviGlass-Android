@@ -1,6 +1,19 @@
 # Validation
 
-## Current 0.2.5 Android test build — 11 October 2026
+## Refreshed 0.2.5 release — 11 October 2026
+
+VersionName 0.2.5 and versionCode 8 deliberately stay unchanged, as requested. The same APK asset is replaced, with a new SHA-256 checksum and matching release tag/source. Package ID and development signer remain unchanged; installation over the earlier APK retains app data.
+
+- Build, lint (no errors), nine JVM tests and the three focused emulator suites pass. Layout checks now tap the portrait centre cover three times across open/close cycles using real Android MotionEvents, plus Activity recreation without a source picker.
+- Local playback checks choose album rows through the real WebView drawer → native command path, changing from MP3 to a generated non-silent 48 kHz stereo PCM WAV. Native player track IDs, advancing positions, nonzero player volume, no player error and Android AudioManager.isMusicActive are checked after each album selection. Adjacent albums, shuffle/repeat, volume and background lifecycle remain checked.
+- Explicit album/song selection replaces the queue on the actual ExoPlayer and resets the previous decoder/audio sink. This is a resilience fix: the affected physical handset's silent audio could not be reproduced here. An active stream and a moving clock do not prove audible speaker/headphone output on that handset; no such guarantee is made.
+- Startup waits for the persisted catalog before presenting first-run choices. A remembered but empty library shows recovery guidance instead. The Android WebView is detached before destruction during Activity recreation. Restart assertions wait for readiness instead of assuming a fixed startup delay. Album-selection fixtures resolve IDs rather than assuming only two albums exist in the emulator database.
+- Focused real-mouse Mac checks and broader simulated playback/keyboard/album-boundary/idle-return checks pass. The Mac orientation harness stubs requestFullscreen to keep the offscreen window resizable; actual Android Full View/native immersive-flag rotation is covered by LayoutIntegrationTest. Local Mac playback remains simulated.
+- The screenshot-led static website passes 1440, 768, 390 and 320 px viewport checks: no horizontal overflow, local images, orientation selector, zoom/Escape, FAQ and honest iOS availability. Rendered public branding and the current APK filename do not call it a test. Privacy checks cover current source, Git history and APK assets/dex; no private address/account, personal identity or signing/fixture key is bundled.
+- Device codec/storage-provider variations, acoustic output on the reported handset, physical cold-start/process-death timing, Bluetooth/battery and manufacturer task dismissal still need real-device feedback. iOS is not built or downloadable yet.
+
+
+## Earlier 0.2.5 verification — 11 October 2026
 
 NaviGlass-Mobile hosts Android now; iOS is planned next, not built. Generic HTTPS-only APK, versionCode 8, unchanged application ID and debug signer. No private endpoint or account is preloaded.
 

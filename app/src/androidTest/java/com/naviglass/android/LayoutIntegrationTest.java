@@ -71,6 +71,14 @@ public class LayoutIntegrationTest {
     assertEquals("Portrait rotation exits Full view", "true",js(activity,"!document.body.classList.contains('immersive') && getComputedStyle(document.querySelector('#mainNav')).display!=='none'"));
     activity.onActivity(a->{try{java.lang.reflect.Field field=MainActivity.class.getDeclaredField("immersivePlayer");field.setAccessible(true);assertFalse(field.getBoolean(a));}catch(ReflectiveOperationException e){throw new AssertionError(e);}});
     assertEquals("true",js(activity,"innerHeight>innerWidth && document.documentElement.scrollWidth<=innerWidth"));
+    for(int attempt=0;attempt<3;attempt++){
+     tapAt(activity,Float.parseFloat(js(activity,"naviglassDebug.bounds().centerX")),Float.parseFloat(js(activity,"naviglassDebug.bounds().centerY")));Thread.sleep(400);
+     assertEquals("Portrait cover tap opens drawer repeatedly: "+attempt,"true",js(activity,"document.querySelector('#panel').open"));
+     tap(activity,"#close");Thread.sleep(350);
+     assertEquals("Closed drawer must not intercept next tap","true",js(activity,"!document.querySelector('#panel').open && document.querySelector('.drawerBackdrop').hidden"));
+    }
+    activity.recreate();Thread.sleep(1600);
+    assertEquals("Saved local library restored without welcome menu","true",js(activity,"document.querySelector('#welcome').hidden && naviglassDebug.entry!=null"));
     js(activity,"document.querySelector('#songs').click();true");Thread.sleep(300);
     assertEquals("true",js(activity,"Math.abs(document.querySelector('#panel').getBoundingClientRect().width-innerWidth)<1 && Math.abs(document.querySelector('#panel').getBoundingClientRect().bottom-innerHeight)<1"));saveScreenshot("native-drawer-portrait.png");
     js(activity,"document.querySelector('#panelBody .songMenu').click();true");Thread.sleep(250);

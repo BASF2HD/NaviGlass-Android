@@ -1743,3 +1743,5 @@ body.immersive .primaryTransport .play {
   #nextAlbum::before { border-top-width: 4px; border-bottom-width: 4px; border-left-width: 7px; }
   .primaryTransport button:not(.play) img { width: var(--play-icon, 18px); height: var(--play-icon, 18px); }
 }
+
+.libraryLoading #welcome button, .libraryLoading #welcome small { display: none; }

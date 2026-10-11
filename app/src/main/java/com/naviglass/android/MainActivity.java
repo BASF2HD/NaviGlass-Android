@@ -126,7 +126,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                 JSONArray albumOrder=request.optJSONArray("albumIds");if(albumOrder==null)albumOrder=new JSONArray();if(albumOrder.length()>10000)throw new IllegalArgumentException("Too many albums");for(int i=0;i<albumOrder.length();i++)if(albumOrder.getString(i).length()>200)throw new IllegalArgumentException("Invalid album ID");
                 Track chosen=Library.get(this).track(ids.getString(index));for(int i=0;i<items.size();i++)if(!Library.get(this).track(items.get(i).mediaId).albumId.equals(chosen.albumId)){albumOrder=new JSONArray();break;}
                 getSharedPreferences("playback",0).edit().putString("albumOrder",albumOrder.toString()).putLong("contextRevision",System.nanoTime()).apply();
-                player.setMediaItems(items,index,0);player.prepare();player.play();respond(id,new JSONObject());break;
+                Bundle queueArgs=new Bundle();ArrayList<String> queueIds=new ArrayList<>();for(int i=0;i<ids.length();i++)queueIds.add(ids.getString(i));queueArgs.putStringArrayList("ids",queueIds);queueArgs.putInt("index",index);
+                ListenableFuture<androidx.media3.session.SessionResult> started=player.sendCustomCommand(new androidx.media3.session.SessionCommand(PlaybackService.PLAY_QUEUE,Bundle.EMPTY),queueArgs);
+                started.addListener(()->{try{if(started.get().resultCode!=androidx.media3.session.SessionResult.RESULT_SUCCESS)throw new IllegalStateException("Audio could not start; check source access and format");respond(id,new JSONObject());}catch(Exception e){failure(id,e);}},getMainExecutor());break;
             case "toggle": requirePlayer();if(player.getPlayWhenReady())player.pause();else{player.prepare();player.play();}respond(id,new JSONObject());break;
             case "next": requirePlayer();if(player.hasNextMediaItem()){player.seekToNextMediaItem();player.play();}else adjacentAlbum(1);respond(id,new JSONObject());break;
             case "previous": requirePlayer();if(player.hasPreviousMediaItem()){player.seekToPreviousMediaItem();player.play();}else adjacentAlbum(-1);respond(id,new JSONObject());break;
@@ -181,7 +183,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         if(player.getPlayerError()!=null)s.put("error",current!=null&&current.mediaId.startsWith("radio:")?"Station unavailable. Check your internet connection or try another station.":"This song could not be played. Check source access and audio format.");
         event("state",s,"");
     }catch(Exception ignored){}}
-    private void catalog(){worker.execute(()->{try{JSONArray list=NetworkSources.active(this)?NetworkSources.albums(this):Library.get(this).albums();String prefix=NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:";for(int i=0;i<list.length();i++){JSONObject album=list.getJSONObject(i);album.put("starred",getSharedPreferences("album-favourites",0).getBoolean(prefix+album.getString("id"),false));}JSONObject data=new JSONObject().put("albums",list).put("remote",NetworkSources.active(this));runOnUiThread(()->event("catalog",data,""));}
+    private void catalog(){worker.execute(()->{try{JSONArray list=NetworkSources.active(this)?NetworkSources.albums(this):Library.get(this).albums();String prefix=NetworkSources.active(this)?NetworkSources.account(this).getString("url")+":" : "local:";for(int i=0;i<list.length();i++){JSONObject album=list.getJSONObject(i);album.put("starred",getSharedPreferences("album-favourites",0).getBoolean(prefix+album.getString("id"),false));}JSONObject data=new JSONObject().put("albums",list).put("remote",NetworkSources.active(this)).put("remembered",list.length()>0||NetworkSources.active(this)||getSharedPreferences("library-source",0).getBoolean("configured",false)||!getPreferences(MODE_PRIVATE).getString("tree","").isEmpty());runOnUiThread(()->event("catalog",data,""));}
         catch(Exception e){runOnUiThread(()->event("error",new JSONObject(),friendly(e)));}});}
     private void permissionAndScan(){if(scanning){event("error",new JSONObject(),"A scan is already running");return;}
         String permission=Build.VERSION.SDK_INT>=33?Manifest.permission.READ_MEDIA_AUDIO:Manifest.permission.READ_EXTERNAL_STORAGE;
@@ -199,7 +201,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         worker.execute(()->{try {LibraryScanner scanner=new LibraryScanner(this,Library.get(this),cancelled);
             LibraryScanner.Progress updates=(checked,indexed,skipped,label)->runOnUiThread(()->progress(checked,indexed,skipped,label,false));
             if(tree==null)scanner.device(updates);else scanner.folder(tree,updates);
-            runOnUiThread(()->{scanning=false;progressDone("");catalog();
+            runOnUiThread(()->{getSharedPreferences("library-source",0).edit().putBoolean("configured",true).apply();scanning=false;progressDone("");catalog();
                 if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
                     requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},43);});
         }catch(Exception e){runOnUiThread(()->{scanning=false;progressDone(friendly(e));});}});
@@ -211,5 +213,5 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     @Override protected void onResume(){super.onResume();updateSystemBars();foreground=true;web.onResume();handler.removeCallbacks(ticker);handler.post(ticker);}
     @Override protected void onPause(){foreground=false;handler.removeCallbacks(ticker);web.onPause();super.onPause();}
     @Override protected void onDestroy(){foreground=false;cancelled.set(true);handler.removeCallbacksAndMessages(null);worker.shutdownNow();
-        if(controllerFuture!=null)MediaController.releaseFuture(controllerFuture);if(web!=null){bridge=null;web.destroy();}super.onDestroy();}
+        if(controllerFuture!=null)MediaController.releaseFuture(controllerFuture);if(web!=null){bridge=null;web.stopLoading();android.view.ViewParent parent=web.getParent();if(parent instanceof android.view.ViewGroup)((android.view.ViewGroup)parent).removeView(web);web.destroy();}super.onDestroy();}
 }

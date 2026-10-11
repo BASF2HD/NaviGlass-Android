@@ -21,6 +21,7 @@ import java.util.List;
 /** Audio lives outside the WebView and continues with the screen locked. */
 public final class PlaybackService extends MediaSessionService {
     static final String ADJACENT="naviglass.adjacentAlbum";
+    static final String PLAY_QUEUE="naviglass.playQueue";
     private final java.util.concurrent.ExecutorService queueWorker=java.util.concurrent.Executors.newSingleThreadExecutor();
     private boolean advancing,closing;
     private ExoPlayer player;
@@ -41,9 +42,18 @@ public final class PlaybackService extends MediaSessionService {
                     if(!getPackageName().equals(c.getPackageName())&&!c.isTrusted())return MediaSession.ConnectionResult.reject();
                     // Media3 defaults can be read-only even for our own controller. Grant playback
                     // explicitly only after the same-package/trusted-controller gate above.
-                    return new MediaSession.ConnectionResult.AcceptedResultBuilder(s,c).setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().add(new androidx.media3.session.SessionCommand(ADJACENT,android.os.Bundle.EMPTY)).build()).setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS).build();
+                    return new MediaSession.ConnectionResult.AcceptedResultBuilder(s,c).setAvailableSessionCommands(MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().add(new androidx.media3.session.SessionCommand(ADJACENT,android.os.Bundle.EMPTY)).add(new androidx.media3.session.SessionCommand(PLAY_QUEUE,android.os.Bundle.EMPTY)).build()).setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS).build();
                 }
                 @Override public ListenableFuture<androidx.media3.session.SessionResult> onCustomCommand(MediaSession s,MediaSession.ControllerInfo c,androidx.media3.session.SessionCommand command,android.os.Bundle args){
+                    if(PLAY_QUEUE.equals(command.customAction)&&getPackageName().equals(c.getPackageName())){
+                        try{ArrayList<String> ids=args.getStringArrayList("ids");int index=args.getInt("index",0);if(ids==null||ids.isEmpty()||ids.size()>10000||index<0||index>=ids.size())throw new IllegalArgumentException("Invalid queue");ArrayList<MediaItem> items=new ArrayList<>();
+                            for(String id:ids){Track t=Library.get(PlaybackService.this).track(id);MediaItem item=NetworkSources.item(PlaybackService.this,t);if(item==null)throw new IllegalArgumentException("Song unavailable");items.add(item);}
+                            // Replace an explicitly selected album on the actual player, not an
+                            // optimistic controller timeline; reset the old decoder/audio sink.
+                            player.stop();player.clearMediaItems();player.setMediaItems(items,index,0);player.prepare();player.play();
+                            return Futures.immediateFuture(new androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS));
+                        }catch(Exception e){return Futures.immediateFuture(new androidx.media3.session.SessionResult(androidx.media3.session.SessionError.ERROR_BAD_VALUE));}
+                    }
                     if(ADJACENT.equals(command.customAction)&&getPackageName().equals(c.getPackageName())){advanceAlbum(args.getInt("direction",1)<0?-1:1,false);return Futures.immediateFuture(new androidx.media3.session.SessionResult(androidx.media3.session.SessionResult.RESULT_SUCCESS));}
                     return MediaSession.Callback.super.onCustomCommand(s,c,command,args);
                 }
